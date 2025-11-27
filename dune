@@ -1,0 +1,75 @@
+(executable
+ (name crunch)
+ (modules crunch)
+ (enabled_if (= %{context_name} "default"))
+ (libraries
+  hxd.core
+  hxd.string
+  cmdliner
+  fmt
+  fmt.tty
+  fmt.cli
+  logs
+  logs.fmt
+  logs.cli
+  fpath))
+
+(executable
+ (name main)
+ (modules main documents)
+ (link_flags :standard -cclib "-z solo5-abi=hvt")
+ (libraries
+  blame.stem
+  blame.emails
+  gmp
+  mirage-crypto-rng-mkernel
+  vifu)
+ (foreign_stubs
+  (language c)
+  (names manifest)))
+
+(library
+ (name stem)
+ (public_name blame.stem)
+ (modules stem)
+ (libraries digestif jsont))
+
+(library
+ (name emails)
+ (public_name blame.emails)
+ (modules emails)
+ (libraries jsont hxd.core hxd.string emile blaze.email digestif mkernel carton-miou.flux))
+
+(rule
+ (targets manifest.c)
+ (enabled_if
+  (= %{context_name} "default"))
+ (action
+  (write-file manifest.c "")))
+
+(rule
+ (targets manifest.c)
+ (deps manifest.json)
+ (enabled_if
+  (= %{context_name} "solo5"))
+ (action
+  (run solo5-elftool gen-manifest manifest.json manifest.c)))
+
+(rule
+ (targets manifest.json)
+ (enabled_if
+  (= %{context_name} "solo5"))
+ (action
+  (with-stdout-to
+   manifest.json
+   (run %{exe:main.exe} --ipv4=0.0.0.0/24))))
+
+(rule
+ (targets documents.ml)
+ (deps index.html)
+ (action
+  (with-stdout-to
+    documents.ml
+    (run %{exe:crunch.exe} --with-comments --file index.html))))
+
+(vendored_dirs vendors)
