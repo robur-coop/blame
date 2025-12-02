@@ -19,8 +19,11 @@
  (modules main documents)
  (link_flags :standard -cclib "-z solo5-abi=hvt")
  (libraries
-  blame.stem
   blame.emails
+  blaze.stem
+  stem.tokenizer
+  stem.snowball
+  stem.stopwords
   gmp
   mirage-crypto-rng-mkernel
   vifu)
@@ -28,17 +31,34 @@
   (language c)
   (names manifest)))
 
+(executable
+ (name script)
+ (modules script)
+ (modes js)
+ (libraries jsont.brr brr blame.format))
+
+(rule
+ (targets script.js)
+ (deps script.bc.js)
+ (action (copy script.bc.js script.js)))
+
 (library
- (name stem)
- (public_name blame.stem)
- (modules stem)
- (libraries digestif jsont))
+ (name format)
+ (public_name blame.format)
+ (modules format)
+ (libraries fmt rosetta emile ptime jsont))
+
+; (library
+;  (name stem)
+;  (public_name blame.stem)
+;  (modules stem)
+;  (libraries carton digestif jsont stem.tokenizer stem.snowball stem.stopwords))
 
 (library
  (name emails)
  (public_name blame.emails)
  (modules emails)
- (libraries jsont hxd.core hxd.string emile blaze.email digestif mkernel carton-miou.flux))
+ (libraries blame.format jsont hxd.core hxd.string emile blaze.email digestif mkernel carton-miou.flux))
 
 (rule
  (targets manifest.c)
@@ -66,10 +86,10 @@
 
 (rule
  (targets documents.ml)
- (deps index.html)
+ (deps index.html script.js)
  (action
   (with-stdout-to
     documents.ml
-    (run %{exe:crunch.exe} --with-comments --file index.html))))
+    (run %{exe:crunch.exe} --with-comments --file index.html --file script.js))))
 
 (vendored_dirs vendors)

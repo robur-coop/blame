@@ -20,3 +20,7 @@
 [ ! -d "vendors/flux" ] && opam source flux --dir vendors/flux
 [ ! -d "vendors/mkernel-memtrace" ] && opam source mkernel-memtrace --dir vendors/mkernel-memtrace
 [ ! -d "vendors/blaze" ] && opam source blaze --dir vendors/blaze
+[ ! -d "vendors/stem" ] && opam source stem --dir vendors/stem
+[ ! -d "vendors/multipart_form" ] && opam source multipart_form --dir vendors/multipart_form
+[ ! -d "vendors/mrmime" ] && opam source mrmime --dir vendors/mrmime
+[ ! -d "vendors/prettym" ] && opam source prettym --dir vendors/prettym

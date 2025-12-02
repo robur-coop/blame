@@ -38,46 +38,11 @@ let identify =
   let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
   { Carton.First_pass.init; feed; serialize }
 
-type t =
-  { title : string
-  ; uid : Carton.Uid.t
-  ; date : Ptime.t
-  ; from : Emile.mailbox }
-
-let json =
-  let open Jsont in
-  let title = Object.mem "title" ~enc:(fun t -> t.title) string in
-  let uid = map
-    ~dec:(fun str -> Carton.Uid.unsafe_of_string (Ohex.decode str))
-    ~enc:(fun (uid : Carton.Uid.t) -> Ohex.encode (uid :> string))
-    string in
-  let uid = Object.mem "uid" ~enc:(fun t -> t.uid) uid in
-  let date = map
-    ~dec:(fun str -> match Ptime.of_rfc3339 str with
-    | Ok (t, _, _) -> t
-    | Error _ -> Fmt.invalid_arg "Invalid RFC 3339 date")
-    ~enc:(fun t -> Ptime.to_rfc3339 t)
-    string in
-  let date = Object.mem "date" ~enc:(fun t -> t.date) date in
-  let mailbox = map
-    ~dec:(fun str -> match Emile.of_string str with
-    | Ok t -> t
-    | Error _ -> Fmt.invalid_arg "Invalid email address")
-    ~enc:Emile.to_string string in
-  let from = Object.mem "from" ~enc:(fun t -> t.from) mailbox in
-  let fn title uid date from =
-    { title; uid; date; from } in
-  Object.map fn
-  |> title
-  |> uid
-  |> date
-  |> from
-  |> Object.finish
-
-let headers =
-  let open Mrmime in
-  let open Field_name in
-  Map.empty
+let semantic_to_docs =
+  let fn acc (mime, lang, contents) =
+    let contents = Carton.Uid.unsafe_of_string contents in
+    { Format.mime; lang; contents } :: acc in
+  Email.Semantic.fold fn []
 
 let headers =
   let rec consume decoder fields = function
@@ -89,7 +54,7 @@ let headers =
         |> consume decoder (field :: fields)
     | `Malformed _ -> (`Malformed, fields) in
   let init () =
-    let decoder = Mrmime.Hd.decoder headers in
+    let decoder = Mrmime.Hd.decoder Mrmime.Field_name.Map.empty in
     let[@warning "-8"] (`Await : Mrmime.Hd.decode) = Mrmime.Hd.decode decoder in
     (`Continue decoder, [])
   and push (state, fields) str = match state with
@@ -128,28 +93,66 @@ let record_and_filter index (value, cursor, uid) =
   Hashtbl.add index uid cursor;
   let ( let* ) = Option.bind in
   match Carton.Value.kind value with
-  | `B | `C | `D -> None
+  | `B | `D -> None
+  | `C -> Some (Either.Left uid)
   | `A ->
       let str = Carton.Value.string value in
       let m = Email.of_string str in
-      let* ({ Email.Skeleton.headers; _ }, _) = Result.to_option m in
-      Some (uid, Carton.Uid.unsafe_of_string headers)
+      let* ({ Email.Skeleton.headers; _ }, s) = Result.to_option m in
+      let docs = semantic_to_docs s in
+      if docs = [] then None
+      else Some (Either.Right (uid, Carton.Uid.unsafe_of_string headers, docs))
 
 let crlf = Bstr.of_string "\r\n"
 
-let unstrctrd_to_utf_8_string v =
+let end_encoded_word uchr0 uchr1 =
+  let uchr0 = Uchar.to_int uchr0
+  and uchr1 = Uchar.to_int uchr1 in
+  uchr0 = 0x3f && uchr1 = 0x3d
+
+let begin_encoded_word uchr0 uchr1 =
+  let uchr0 = Uchar.to_int uchr0
+  and uchr1 = Uchar.to_int uchr1 in
+  uchr0 = 0x3d && uchr1 = 0x3f
+
+let unstrctrd_with_encoded_words_to_string v =
   let ( let* ) = Option.bind in
-  let fn acc = function #Unstrctrd.elt as elt -> elt :: acc | _ -> acc in
-  let v = List.fold_left fn [] v in
-  let v = Unstrctrd.of_list (List.rev v) in
-  let* v = Result.to_option v in
-  let v = Unstrctrd.fold_fws v in
-  Some (Unstrctrd.to_utf_8_string v)
+  let unstrctrd_to_string v =
+    let v = Unstrctrd.of_list v in
+    let v = Result.get_ok v in
+    Unstrctrd.to_utf_8_string v in
+  let rec until_end_encoded_word acc = function
+    | `Uchar uchr0 :: `Uchar uchr1 :: rest when end_encoded_word uchr0 uchr1 ->
+        let acc = `Uchar uchr1 :: `Uchar uchr0 :: acc in
+        let v = Unstrctrd.of_list (List.rev acc) in
+        let* v = Result.to_option v in
+        let str = Unstrctrd.to_utf_8_string v in
+        begin match Mrmime.Encoded_word.of_string str with
+        | Ok { Mrmime.Encoded_word.data= Ok str; _ } -> Some (str, rest)
+        | _ -> None end
+    | (#Unstrctrd.elt as x) :: (#Unstrctrd.elt as y) :: rest -> until_end_encoded_word (y :: x :: acc) rest
+    | (`Open _ | `Close) :: rest -> until_end_encoded_word acc rest
+    | _ -> None in
+  let rec go acc unstrctrd = function
+    | `Uchar uchr0 :: `Uchar uchr1 :: rest when begin_encoded_word uchr0 uchr1 ->
+        let acc =
+          if List.is_empty unstrctrd then acc
+          else unstrctrd_to_string (List.rev unstrctrd) :: acc in
+        begin match until_end_encoded_word [`Uchar uchr1; `Uchar uchr0] rest with
+        | Some (ew, rest) -> go (ew :: acc) [] rest
+        | None -> go acc [`Uchar uchr1; `Uchar uchr0] rest end
+    | #Unstrctrd.elt as elt :: rest ->
+        go acc (elt :: unstrctrd) rest
+    | (`Open _ | `Close) :: rest -> go acc unstrctrd rest
+    | [] ->
+        if List.is_empty unstrctrd then List.rev acc
+        else List.rev (unstrctrd_to_string (List.rev unstrctrd) :: acc) in
+  go [] [] v |> String.concat ""
 
 let hdopt = function
   | x :: _ -> Some x | [] -> None
 
-let to_entry pack (uid, hdrs) =
+let to_entry pack (uid, hdrs, docs) =
   let ( let* ) = Option.bind in
   let size = Carton.size_of_uid pack ~uid:hdrs Carton.Size.zero in
   let blob = Carton.Blob.make ~size in
@@ -161,13 +164,12 @@ let to_entry pack (uid, hdrs) =
   let via = bstr_to_string in
   let into = headers in
   let hdrs, _leftover = Flux.Stream.run ~from ~via ~into in
-  Log.debug (fun m -> m "[+] %a find metadata" Carton.Uid.pp uid);
   let open Mrmime in
   let* title =
     let fn = function
       | Field.Field (fn, Field.Unstructured, v) ->
         if Field_name.equal fn Field_name.subject
-        then unstrctrd_to_utf_8_string v
+        then Some (unstrctrd_with_encoded_words_to_string v)
         else None
       | _ -> None in
     List.find_map fn hdrs in
@@ -187,10 +189,7 @@ let to_entry pack (uid, hdrs) =
         else None
       | _ -> None in
     List.find_map fn hdrs in
-  Log.debug (fun m -> m "[+] %a" Carton.Uid.pp uid);
-  Log.debug (fun m -> m "[+]: %a" Emile.pp_mailbox from);
-  Log.debug (fun m -> m "[+]: %s" title);
-  Some { title; from; date; uid }
+  Some { Format.title; from; date; uid; docs }
 
 let emails ?cachesize name =
   let map blk ~pos len =
@@ -204,6 +203,7 @@ let emails ?cachesize name =
     let via = Carton_miou_flux.first_pass ~digest:sha1 ~ref_length in
     let into = Carton_miou_flux.oracle ~identify in
     let oracle, _leftover = Flux.Stream.run ~from ~via ~into in
+    Log.info (fun m -> m "Number of objects: %d" oracle.Carton.number_of_objects);
     let pack =
       let z = Bstr.create De.io_buffer_size in
       let allocate bits = De.make_window ~bits in
@@ -214,7 +214,9 @@ let emails ?cachesize name =
     let from = Carton_miou_flux.entries ~threads:0 pack oracle in
     let via = Flux.Flow.filter_map (record_and_filter index) in
     let into = Flux.Sink.list in
-    let emails, _leftover = Flux.Stream.run ~from ~via ~into in
+    let documents_and_emails, _leftover = Flux.Stream.run ~from ~via ~into in
+    let documents, emails = List.partition_map Fun.id documents_and_emails in
+    Log.info (fun m -> m "%d document(s) and %d email(s)" (List.length documents) (List.length emails));
     let pack = 
       let index uid = Carton.Local (Hashtbl.find index uid) in
       Carton.with_index pack index in
@@ -222,6 +224,6 @@ let emails ?cachesize name =
     let via = Flux.Flow.filter_map (to_entry pack) in
     let into = Flux.Sink.list in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
-    (pack, entries) in
+    ((pack, oracle.Carton.hash), documents, entries) in
   let open Mkernel in
   map fn [ block name ]
