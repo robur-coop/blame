@@ -1,0 +1,133 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f6f9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+h1 {
+  margin-top: 40px;
+  color: #333;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.search-box {
+  margin-top: 20px;
+  width: 90%;
+  max-width: 500px;
+}
+
+.search-box input {
+  width: 100%;
+  padding: 12px 15px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  outline: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  transition: 0.2s;
+}
+
+.search-box input:focus {
+  border-color: #007bff;
+  box-shadow: 0 2px 10px rgba(0, 123, 255, 0.3);
+}
+
+.search-box .none {
+  border-color: #f44336;
+}
+
+.topics {
+  margin-top: 30px;
+  width: 90%;
+  max-width: 600px;
+}
+
+.topic {
+  background: white;
+  padding: 15px 20px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.topic:hover {
+  transform: translateX(5px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.details-wrapper {
+  overflow: hidden;
+  max-height: 0;
+  transition:
+    max-height 0.35s ease,
+    opacity 0.3s ease;
+  opacity: 0;
+}
+
+.topic:hover .details-wrapper {
+  max-height: 150px;
+  opacity: 1;
+}
+
+.details {
+  padding: 10px 5px 0 5px;
+  color: #555;
+  font-size: 14px;
+}
+
+.crt {
+  margin-top: 50px;
+  width: min(200px, 92vw);
+  min-height: 200px;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  transform: perspective(1200px) rotateX(1deg) rotateY(0.5deg);
+  padding: 10px;
+}
+
+.crt::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.05),
+    rgba(0, 0, 0, 0.05) 2px,
+    transparent 3px,
+    transparent 4px
+  );
+  mix-blend-mode: multiply;
+}
+
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      180% 120% at 50% -10%,
+      rgba(0, 0, 0, 0.02),
+      transparent 40%
+    ),
+    radial-gradient(80% 60% at 50% 120%, rgba(0, 0, 0, 0.08), transparent 60%);
+  opacity: 0.7;
+}
+
+.boot pre {
+  margin: 0;
+  font-size: 8px;
+  line-height: 1.45;
+  overflow-y: auto;
+  opacity: 0.9;
+}

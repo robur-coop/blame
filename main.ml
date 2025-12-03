@@ -66,6 +66,7 @@ let stems (documents, hash) req _server () =
 let stem pack req uid _server () =
   let open Vifu.Response.Syntax in
   try
+    let pack = Carton.copy pack in
     let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
     let blob = Carton.Blob.make ~size in
     let value = Carton.of_uid pack blob ~uid in
@@ -88,8 +89,9 @@ let stem pack req uid _server () =
           map ~enc ~dec string in
         let* () = Vifu.Response.with_json req (Format.stem ~uid) t in
         Vifu.Response.respond `OK
-  with _exn ->
-    let* () = Vifu.Response.empty in
+  with exn ->
+    let str = Fmt.str "Got an exception: %s" (Printexc.to_string exn) in
+    let* () = Vifu.Response.with_text req str in
     Vifu.Response.respond `Not_found
 
 let show pack req uid _server () =
@@ -161,6 +163,30 @@ let script =
       let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
       Vifu.Response.respond `OK
 
+let style =
+  let hash =
+    let rec go ctx idx =
+      if idx >= Array.length Documents.style_css
+      then Digestif.SHA1.(to_hex (get ctx ))
+      else go (Digestif.SHA1.feed_string ctx Documents.style_css.(idx)) (succ idx) in
+    go Digestif.SHA1.empty 0 in
+  fun req _server () ->
+    let open Vifu.Response.Syntax in
+    let* () = Vifu.Response.add ~field:"content-type" "text/css" in
+    let hdrs = Vifu.Request.headers req in
+    let if_none_match = match Vifu.Headers.get hdrs "if-none-match" with
+      | Some hash' -> String.equal hash' hash
+      | None -> false in
+    if if_none_match
+    then
+      let* () = Vifu.Response.empty in
+      Vifu.Response.respond `Not_modified
+    else
+      let from = Flux.Source.array Documents.style_css in
+      let* () = Vifu.Response.add ~field:"Etag" hash in
+      let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
+      Vifu.Response.respond `OK
+
 let none_if_stop lang =
   match List.assoc_opt lang Stopwords.words with
   | Some stops -> fun stem -> if List.mem stem stops then None else Some stem
@@ -224,6 +250,7 @@ let run _ cidr gateway port =
     [ get (rel / "list" /?? any) --> (list (entries, hash_of_entries))
     ; get (rel / "get" /% uid /?? any) --> (show pack)
     ; get (rel / "script.js" /?? any) --> script
+    ; get (rel / "style.css" /?? any) --> style
     ; get (rel / "stems" /?? any) --> (stems (documents, hash_of_stems))
     ; get (rel / "stem" /% uid /?? any) --> (stem pack)
     ; post (json_encoding (Format.query ~lang)) (rel / "query" /?? any) --> query

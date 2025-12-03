@@ -86,10 +86,10 @@
 
 (rule
  (targets documents.ml)
- (deps index.html script.js)
+ (deps index.html script.js style.css)
  (action
   (with-stdout-to
     documents.ml
-    (run %{exe:crunch.exe} --with-comments --file index.html --file script.js))))
+    (run %{exe:crunch.exe} --with-comments --file index.html --file script.js --file style.css))))
 
 (vendored_dirs vendors)

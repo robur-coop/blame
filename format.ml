@@ -10,8 +10,10 @@ and ('uid, 'lang) doc =
   ; contents : 'uid }
 
 let emile_to_utf_8_string = function
-  | { Emile.name= None; _ } as m -> Emile.to_string m
-  | { Emile.name= Some phrase; local; domain; } ->
+  | { Emile.name= None; local; domain }
+  | { Emile.name= Some _; local; domain; } -> Emile.address_to_string (local, domain)
+
+(*
       let buf = Buffer.create 0x7ff in
       let fn = function
         | `Dot -> Buffer.add_string buf ". "
@@ -31,6 +33,7 @@ let emile_to_utf_8_string = function
       List.iter fn phrase;
       let name = Buffer.contents buf in
       Fmt.str "%s<%s>" name (Emile.address_to_string (local, domain))
+  *)
 
 let email ~uid ~lang =
   let open Jsont in
