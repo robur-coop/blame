@@ -1,5 +1,3 @@
-[@@@warning "-32"]
-
 open Brr
 
 let jstrf fmt = Fmt.kstr Jstr.v fmt
@@ -173,7 +171,9 @@ let run () =
           El.div
             ~at:At.[ class' (jstrf "topic"); id (jstrf "%s" x.Format.uid) ]
             [
-              El.txt' x.Format.title;
+              El.a
+                ~at:At.[ href (jstrf "/get/%s" x.Format.uid) ]
+                [ El.txt' x.Format.title ];
               El.div
                 ~at:At.[ class' (jstrf "details-wrapper") ]
                 [ El.div ~at:At.[ class' (jstrf "details") ] [ El.txt' from ] ];

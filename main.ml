@@ -1,5 +1,3 @@
-[@@@warning "-33"]
-
 module RNG = Mirage_crypto_rng.Fortuna
 
 let ( let@ ) finally fn = Fun.protect ~finally fn
@@ -152,28 +150,17 @@ let show pack req uid _server () =
     let* () = Vifu.Response.empty in
     Vifu.Response.respond `Not_found
 
-let index req _server () =
-  let open Vifu.Response.Syntax in
-  let from = Flux.Source.array Documents.index_html in
-  let* () = Vifu.Response.add ~field:"content-type" "text/html" in
-  let* () = Vifu.Response.with_source req from in
-  Vifu.Response.respond `OK
-
-let script =
+let from_documents ~mime contents =
   let hash =
     let rec go ctx idx =
-      if idx >= Array.length Documents.script_js then
-        Digestif.SHA1.(to_hex (get ctx))
-      else
-        go (Digestif.SHA1.feed_string ctx Documents.script_js.(idx)) (succ idx)
+      if idx >= Array.length contents then Digestif.SHA1.(to_hex (get ctx))
+      else go (Digestif.SHA1.feed_string ctx contents.(idx)) (succ idx)
     in
     go Digestif.SHA1.empty 0
   in
   fun req _server () ->
     let open Vifu.Response.Syntax in
-    let* () =
-      Vifu.Response.add ~field:"content-type" "application/javascript"
-    in
+    let* () = Vifu.Response.add ~field:"content-type" mime in
     let hdrs = Vifu.Request.headers req in
     let if_none_match =
       match Vifu.Headers.get hdrs "if-none-match" with
@@ -184,38 +171,14 @@ let script =
       let* () = Vifu.Response.empty in
       Vifu.Response.respond `Not_modified
     else
-      let from = Flux.Source.array Documents.script_js in
+      let from = Flux.Source.array contents in
       let* () = Vifu.Response.add ~field:"Etag" hash in
       let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
       Vifu.Response.respond `OK
 
-let style =
-  let hash =
-    let rec go ctx idx =
-      if idx >= Array.length Documents.style_css then
-        Digestif.SHA1.(to_hex (get ctx))
-      else
-        go (Digestif.SHA1.feed_string ctx Documents.style_css.(idx)) (succ idx)
-    in
-    go Digestif.SHA1.empty 0
-  in
-  fun req _server () ->
-    let open Vifu.Response.Syntax in
-    let* () = Vifu.Response.add ~field:"content-type" "text/css" in
-    let hdrs = Vifu.Request.headers req in
-    let if_none_match =
-      match Vifu.Headers.get hdrs "if-none-match" with
-      | Some hash' -> String.equal hash' hash
-      | None -> false
-    in
-    if if_none_match then
-      let* () = Vifu.Response.empty in
-      Vifu.Response.respond `Not_modified
-    else
-      let from = Flux.Source.array Documents.style_css in
-      let* () = Vifu.Response.add ~field:"Etag" hash in
-      let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
-      Vifu.Response.respond `OK
+let script = from_documents ~mime:"application/javascript" Documents.script_js
+let style = from_documents ~mime:"text/css" Documents.style_css
+let index = from_documents ~mime:"text/html" Documents.index_html
 
 let none_if_stop lang =
   match List.assoc_opt lang Stopwords.words with
@@ -270,11 +233,14 @@ let run _ cidr gateway port =
     let ctx = feed_string ctx ".stems" in
     to_hex (get ctx)
   in
-  let lang =
-    let open Jsont in
-    let enc (lang : Snowball.Language.t) = (lang :> string) in
-    let dec = language_of_string in
-    map ~enc ~dec string
+  let jquery =
+    let lang =
+      let open Jsont in
+      let enc (lang : Snowball.Language.t) = (lang :> string) in
+      let dec = language_of_string in
+      map ~enc ~dec string
+    in
+    Format.query ~lang
   in
   let routes =
     let open Vifu.Route in
@@ -288,8 +254,7 @@ let run _ cidr gateway port =
       get (rel / "style.css" /?? any) --> style;
       get (rel / "stems" /?? any) --> stems (documents, hash_of_stems);
       get (rel / "stem" /% uid /?? any) --> stem pack;
-      post (json_encoding (Format.query ~lang)) (rel / "query" /?? any)
-      --> query;
+      post (json_encoding jquery) (rel / "query" /?? any) --> query;
       get (rel /?? any) --> index;
     ]
   in

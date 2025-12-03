@@ -86,7 +86,7 @@ h1 {
 
 .crt {
   margin-top: 50px;
-  width: min(200px, 92vw);
+  width: min(220px, 92vw);
   min-height: 200px;
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
