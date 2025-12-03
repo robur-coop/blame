@@ -1,7 +1,8 @@
 (executable
  (name crunch)
  (modules crunch)
- (enabled_if (= %{context_name} "default"))
+ (enabled_if
+  (= %{context_name} "default"))
  (libraries
   hxd.core
   hxd.string
@@ -40,7 +41,8 @@
 (rule
  (targets script.js)
  (deps script.bc.js)
- (action (copy script.bc.js script.js)))
+ (action
+  (copy script.bc.js script.js)))
 
 (library
  (name format)
@@ -58,7 +60,16 @@
  (name emails)
  (public_name blame.emails)
  (modules emails)
- (libraries blame.format jsont hxd.core hxd.string emile blaze.email digestif mkernel carton-miou.flux))
+ (libraries
+  blame.format
+  jsont
+  hxd.core
+  hxd.string
+  emile
+  blaze.email
+  digestif
+  mkernel
+  carton-miou.flux))
 
 (rule
  (targets manifest.c)
@@ -89,7 +100,15 @@
  (deps index.html script.js style.css)
  (action
   (with-stdout-to
-    documents.ml
-    (run %{exe:crunch.exe} --with-comments --file index.html --file script.js --file style.css))))
+   documents.ml
+   (run
+    %{exe:crunch.exe}
+    --with-comments
+    --file
+    index.html
+    --file
+    script.js
+    --file
+    style.css))))
 
 (vendored_dirs vendors)

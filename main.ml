@@ -1,66 +1,80 @@
 [@@@warning "-33"]
 
 module RNG = Mirage_crypto_rng.Fortuna
+
 let ( let@ ) finally fn = Fun.protect ~finally fn
 
 let uid =
   let open Vifu.Uri in
   let dec str =
     let hash = Ohex.decode str in
-    if String.length hash = Digestif.SHA1.digest_size
-    then Carton.Uid.unsafe_of_string hash else Fmt.invalid_arg "Invalid UID" in
+    if String.length hash = Digestif.SHA1.digest_size then
+      Carton.Uid.unsafe_of_string hash
+    else Fmt.invalid_arg "Invalid UID"
+  in
   let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string) in
   conv dec enc (string `Path)
 
 let language_of_string =
-  let fn (lang : Snowball.Language.t) =
-    ((lang :> string), lang) in
+  let fn (lang : Snowball.Language.t) = ((lang :> string), lang) in
   let lst = List.map fn Snowball.languages in
   fun str -> List.assoc str lst
 
 let list (entries, hash) req _server () =
   let open Vifu.Response.Syntax in
   let hdrs = Vifu.Request.headers req in
-  let if_none_match = match Vifu.Headers.get hdrs "if-none-match" with
+  let if_none_match =
+    match Vifu.Headers.get hdrs "if-none-match" with
     | Some hash' -> String.equal hash' hash
-    | None -> false in
-  if if_none_match
-  then let* () = Vifu.Response.empty in
-       Vifu.Response.respond `Not_modified
+    | None -> false
+  in
+  if if_none_match then
+    let* () = Vifu.Response.empty in
+    Vifu.Response.respond `Not_modified
   else
     let uid =
       let open Jsont in
       let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
       and dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-      map ~enc ~dec string in
+      map ~enc ~dec string
+    in
     let lang =
       let open Jsont in
       let enc (lang : Snowball.Language.t) = (lang :> string) in
       let dec = language_of_string in
-      map ~enc ~dec string in
+      map ~enc ~dec string
+    in
     let* () = Vifu.Response.add ~field:"Etag" hash in
-    let* () = Vifu.Response.with_json ~compression:`DEFLATE req
-      (Jsont.list (Format.email ~uid ~lang)) entries in
+    let* () =
+      Vifu.Response.with_json ~compression:`DEFLATE req
+        (Jsont.list (Format.email ~uid ~lang))
+        entries
+    in
     Vifu.Response.respond `OK
 
 let stems (documents, hash) req _server () =
   let open Vifu.Response.Syntax in
   let hdrs = Vifu.Request.headers req in
-  let if_none_match = match Vifu.Headers.get hdrs "if-none-match" with
+  let if_none_match =
+    match Vifu.Headers.get hdrs "if-none-match" with
     | Some hash' -> String.equal hash' hash
-    | None -> false in
-  if if_none_match
-  then let* () = Vifu.Response.empty in
-       Vifu.Response.respond `Not_modified
+    | None -> false
+  in
+  if if_none_match then
+    let* () = Vifu.Response.empty in
+    Vifu.Response.respond `Not_modified
   else
     let uid =
       let open Jsont in
       let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
       and dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-      map ~enc ~dec string in
+      map ~enc ~dec string
+    in
     let* () = Vifu.Response.add ~field:"Etag" hash in
-    let* () = Vifu.Response.with_json ~compression:`DEFLATE req
-      (Jsont.list uid) documents in
+    let* () =
+      Vifu.Response.with_json ~compression:`DEFLATE req (Jsont.list uid)
+        documents
+    in
     Vifu.Response.respond `OK
 
 let stem pack req uid _server () =
@@ -81,12 +95,13 @@ let stem pack req uid _server () =
         let tokens = List.of_seq (Hashtbl.to_seq tbl) in
         let mail = Carton.Uid.unsafe_of_string mail
         and blob = Carton.Uid.unsafe_of_string blob in
-        let t =  { Format.mail; blob; length; tokens } in
+        let t = { Format.mail; blob; length; tokens } in
         let uid =
           let open Jsont in
           let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string) in
           let dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-          map ~enc ~dec string in
+          map ~enc ~dec string
+        in
         let* () = Vifu.Response.with_json req (Format.stem ~uid) t in
         Vifu.Response.respond `OK
   with exn ->
@@ -104,30 +119,35 @@ let show pack req uid _server () =
     | `B | `C | `D ->
         let* () = Vifu.Response.with_text req "Invalid object (bad type)\n" in
         Vifu.Response.respond `Not_found
-    | `A ->
-      let str = Carton.Value.string value in
-      match Email.of_string str with
-      | Error _ ->
-          let* () = Vifu.Response.with_text req "Invalid skeleton\n" in
-          Vifu.Response.respond `Not_found
-      | Ok (t, _) ->
-        let load uid =
-          let uid = Carton.Uid.unsafe_of_string uid in
-          let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
-          let blob = Carton.Blob.make ~size in
-          let value = Carton.of_uid pack blob ~uid in
-          let len = Carton.Value.length value in
-          let bstr = Carton.Value.bigstring value in
-          Bstr.sub bstr ~off:0 ~len in
-        let seq = Email.to_seq ~load t in
-        let fn = function
-          | `String str -> str
-          | `Value bstr -> Bstr.to_string bstr in
-        let seq = Seq.map fn seq in
-        let from = Flux.Source.seq seq in
-        let* () = Vifu.Response.add ~field:"content-type" "message/rfc822; charset=utf-8" in
-        let* () = Vifu.Response.with_source req from in
-        Vifu.Response.respond `OK
+    | `A -> (
+        let str = Carton.Value.string value in
+        match Email.of_string str with
+        | Error _ ->
+            let* () = Vifu.Response.with_text req "Invalid skeleton\n" in
+            Vifu.Response.respond `Not_found
+        | Ok (t, _) ->
+            let load uid =
+              let uid = Carton.Uid.unsafe_of_string uid in
+              let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
+              let blob = Carton.Blob.make ~size in
+              let value = Carton.of_uid pack blob ~uid in
+              let len = Carton.Value.length value in
+              let bstr = Carton.Value.bigstring value in
+              Bstr.sub bstr ~off:0 ~len
+            in
+            let seq = Email.to_seq ~load t in
+            let fn = function
+              | `String str -> str
+              | `Value bstr -> Bstr.to_string bstr
+            in
+            let seq = Seq.map fn seq in
+            let from = Flux.Source.seq seq in
+            let* () =
+              Vifu.Response.add ~field:"content-type"
+                "message/rfc822; charset=utf-8"
+            in
+            let* () = Vifu.Response.with_source req from in
+            Vifu.Response.respond `OK)
   with _ ->
     let* () = Vifu.Response.empty in
     Vifu.Response.respond `Not_found
@@ -142,19 +162,25 @@ let index req _server () =
 let script =
   let hash =
     let rec go ctx idx =
-      if idx >= Array.length Documents.script_js
-      then Digestif.SHA1.(to_hex (get ctx ))
-      else go (Digestif.SHA1.feed_string ctx Documents.script_js.(idx)) (succ idx) in
-    go Digestif.SHA1.empty 0 in
+      if idx >= Array.length Documents.script_js then
+        Digestif.SHA1.(to_hex (get ctx))
+      else
+        go (Digestif.SHA1.feed_string ctx Documents.script_js.(idx)) (succ idx)
+    in
+    go Digestif.SHA1.empty 0
+  in
   fun req _server () ->
     let open Vifu.Response.Syntax in
-    let* () = Vifu.Response.add ~field:"content-type" "application/javascript" in
+    let* () =
+      Vifu.Response.add ~field:"content-type" "application/javascript"
+    in
     let hdrs = Vifu.Request.headers req in
-    let if_none_match = match Vifu.Headers.get hdrs "if-none-match" with
+    let if_none_match =
+      match Vifu.Headers.get hdrs "if-none-match" with
       | Some hash' -> String.equal hash' hash
-      | None -> false in
-    if if_none_match
-    then
+      | None -> false
+    in
+    if if_none_match then
       let* () = Vifu.Response.empty in
       Vifu.Response.respond `Not_modified
     else
@@ -166,19 +192,23 @@ let script =
 let style =
   let hash =
     let rec go ctx idx =
-      if idx >= Array.length Documents.style_css
-      then Digestif.SHA1.(to_hex (get ctx ))
-      else go (Digestif.SHA1.feed_string ctx Documents.style_css.(idx)) (succ idx) in
-    go Digestif.SHA1.empty 0 in
+      if idx >= Array.length Documents.style_css then
+        Digestif.SHA1.(to_hex (get ctx))
+      else
+        go (Digestif.SHA1.feed_string ctx Documents.style_css.(idx)) (succ idx)
+    in
+    go Digestif.SHA1.empty 0
+  in
   fun req _server () ->
     let open Vifu.Response.Syntax in
     let* () = Vifu.Response.add ~field:"content-type" "text/css" in
     let hdrs = Vifu.Request.headers req in
-    let if_none_match = match Vifu.Headers.get hdrs "if-none-match" with
+    let if_none_match =
+      match Vifu.Headers.get hdrs "if-none-match" with
       | Some hash' -> String.equal hash' hash
-      | None -> false in
-    if if_none_match
-    then
+      | None -> false
+    in
+    if if_none_match then
       let* () = Vifu.Response.empty in
       Vifu.Response.respond `Not_modified
     else
@@ -213,14 +243,15 @@ let query req _server () =
 let run _ cidr gateway port =
   let devices =
     let open Mkernel in
-    [ Mnet.stackv4 ~name:"service" ?gateway cidr
-    ; Emails.emails "archive" ]
+    [ Mnet.stackv4 ~name:"service" ?gateway cidr; Emails.emails "archive" ]
   in
-  Mkernel.run devices @@ fun (daemon, tcpv4, _udpv4) ((pack, hash), documents, entries) () ->
+  Mkernel.run devices
+  @@ fun (daemon, tcpv4, _udpv4) ((pack, hash), documents, entries) () ->
   Logs.info (fun m -> m "%d documents(s)" (List.length documents));
   Logs.info (fun m -> m "%d email(s)" (List.length entries));
   let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
-  let@ () = fun () ->
+  let@ () =
+   fun () ->
     Mirage_crypto_rng_mkernel.kill rng;
     Mnet.kill daemon
   in
@@ -230,31 +261,37 @@ let run _ cidr gateway port =
     let ctx = empty in
     let ctx = feed_string ctx hash in
     let ctx = feed_string ctx ".emails" in
-    to_hex (get ctx) in
+    to_hex (get ctx)
+  in
   let hash_of_stems =
     let open Digestif.SHA1 in
     let ctx = empty in
     let ctx = feed_string ctx hash in
     let ctx = feed_string ctx ".stems" in
-    to_hex (get ctx) in
+    to_hex (get ctx)
+  in
   let lang =
     let open Jsont in
     let enc (lang : Snowball.Language.t) = (lang :> string) in
     let dec = language_of_string in
-    map ~enc ~dec string in
+    map ~enc ~dec string
+  in
   let routes =
     let open Vifu.Route in
     let open Vifu.Uri in
     let open Vifu.Type in
     let any = Vifu.Uri.any in
-    [ get (rel / "list" /?? any) --> (list (entries, hash_of_entries))
-    ; get (rel / "get" /% uid /?? any) --> (show pack)
-    ; get (rel / "script.js" /?? any) --> script
-    ; get (rel / "style.css" /?? any) --> style
-    ; get (rel / "stems" /?? any) --> (stems (documents, hash_of_stems))
-    ; get (rel / "stem" /% uid /?? any) --> (stem pack)
-    ; post (json_encoding (Format.query ~lang)) (rel / "query" /?? any) --> query
-    ; get (rel /?? any) --> index ]
+    [
+      get (rel / "list" /?? any) --> list (entries, hash_of_entries);
+      get (rel / "get" /% uid /?? any) --> show pack;
+      get (rel / "script.js" /?? any) --> script;
+      get (rel / "style.css" /?? any) --> style;
+      get (rel / "stems" /?? any) --> stems (documents, hash_of_stems);
+      get (rel / "stem" /% uid /?? any) --> stem pack;
+      post (json_encoding (Format.query ~lang)) (rel / "query" /?? any)
+      --> query;
+      get (rel /?? any) --> index;
+    ]
   in
   Vifu.run ~cfg tcpv4 routes ()
 
@@ -279,7 +316,10 @@ let reporter sources ppf =
     Option.fold ~none:true ~some re
   in
   let report src level ~over k msgf =
-    let k _ = over (); k () in
+    let k _ =
+      over ();
+      k ()
+    in
     let pp header _tags k ppf fmt =
       let t1 = Mkernel.clock_monotonic () in
       let delta = Float.of_int (t1 - t0) in
