@@ -83,13 +83,12 @@ let on_input documents bm25 _ev =
   in
   let json = Result.get_ok json in
   let body = Brr_io.Fetch.Body.of_jstr json in
+  let method' = jstrf "POST" in
   let headers =
     Brr_io.Fetch.Headers.of_assoc
       [ (jstrf "Content-Type", jstrf "application/json") ]
   in
-  let init =
-    Brr_io.Fetch.Request.init ~body ~headers ~method':(jstrf "POST") ()
-  in
+  let init = Brr_io.Fetch.Request.init ~body ~headers ~method' () in
   let req = Brr_io.Fetch.Request.v ~init (jstrf "/query") in
   let run () =
     let open Fut.Result_syntax in
@@ -150,6 +149,16 @@ let progress total =
   in
   (reporter, display)
 
+let bulk len lst =
+  let rec go cur acc rem lst =
+    match (rem, cur, lst) with
+    | _, [], [] -> acc
+    | _, cur, [] -> cur :: acc
+    | 0, cur, x :: r -> go [ x ] (cur :: acc) (len - 1) r
+    | n, cur, x :: r -> go (x :: cur) acc (n - 1) r
+  in
+  go [] [] len lst
+
 let run () =
   let open Fut.Result_syntax in
   let req = Brr_io.Fetch.Request.v (jstrf "/list") in
@@ -193,19 +202,32 @@ let run () =
   in
   let _ = bootf "> %d document(s)" (List.length stems) in
   let reporter, display = progress (List.length stems) in
-  let fn uid =
-    let req = Brr_io.Fetch.Request.v (jstrf "/stem/%s" uid) in
+  let fn uids =
+    let method' = jstrf "POST"
+    and json = Jsont_brr.encode Jsont.(list string) uids
+    and headers =
+      Brr_io.Fetch.Headers.of_assoc
+        [ (jstrf "Content-Type", jstrf "application/json") ]
+    in
+    let json = Result.get_ok json in
+    let body = Brr_io.Fetch.Body.of_jstr json in
+    let init = Brr_io.Fetch.Request.init ~body ~headers ~method' () in
+    let req = Brr_io.Fetch.Request.v ~init (jstrf "/stems") in
     let* resp = Brr_io.Fetch.request req in
     let body = Brr_io.Fetch.Response.as_body resp in
-    let* stem = Brr_io.Fetch.Body.json body in
-    let stem = Jsont_brr.decode_jv (Format.stem ~uid:Jsont.string) stem in
-    reporter 1;
+    let* stems = Brr_io.Fetch.Body.json body in
+    let stems =
+      Jsont_brr.decode_jv (Jsont.list (Format.stem ~uid:Jsont.string)) stems
+    in
+    reporter 50;
     display ();
-    Fut.return stem
+    Fut.return stems
   in
+  let stems = bulk 50 stems in
   let documents = List.map fn stems in
   let* documents = Fut.of_list documents |> Fut.map Result.ok in
   let documents = List.filter_map Result.to_option documents in
+  let documents = List.flatten documents in
   let _ = bootf "> document(s) downloaded!" in
   let _ = bootf "> synthetize them" in
   let bm25 = bm25_of_documents documents in

@@ -18,6 +18,18 @@ let language_of_string =
   let lst = List.map fn Snowball.languages in
   fun str -> List.assoc str lst
 
+let juid =
+  let open Jsont in
+  let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string) in
+  let dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
+  map ~enc ~dec string
+
+let jlang =
+  let open Jsont in
+  let enc (lang : Snowball.Language.t) = (lang :> string) in
+  let dec = language_of_string in
+  map ~enc ~dec string
+
 let list (entries, hash) req _server () =
   let open Vifu.Response.Syntax in
   let hdrs = Vifu.Request.headers req in
@@ -30,22 +42,10 @@ let list (entries, hash) req _server () =
     let* () = Vifu.Response.empty in
     Vifu.Response.respond `Not_modified
   else
-    let uid =
-      let open Jsont in
-      let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
-      and dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-      map ~enc ~dec string
-    in
-    let lang =
-      let open Jsont in
-      let enc (lang : Snowball.Language.t) = (lang :> string) in
-      let dec = language_of_string in
-      map ~enc ~dec string
-    in
     let* () = Vifu.Response.add ~field:"Etag" hash in
     let* () =
       Vifu.Response.with_json ~compression:`DEFLATE req
-        (Jsont.list (Format.email ~uid ~lang))
+        (Jsont.list (Format.email ~uid:juid ~lang:jlang))
         entries
     in
     Vifu.Response.respond `OK
@@ -62,46 +62,54 @@ let stems (documents, hash) req _server () =
     let* () = Vifu.Response.empty in
     Vifu.Response.respond `Not_modified
   else
-    let uid =
-      let open Jsont in
-      let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string)
-      and dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-      map ~enc ~dec string
-    in
     let* () = Vifu.Response.add ~field:"Etag" hash in
     let* () =
-      Vifu.Response.with_json ~compression:`DEFLATE req (Jsont.list uid)
+      Vifu.Response.with_json ~compression:`DEFLATE req (Jsont.list juid)
         documents
     in
     Vifu.Response.respond `OK
+
+let stem_of_uid pack uid =
+  let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
+  let blob = Carton.Blob.make ~size in
+  let value = Carton.of_uid pack blob ~uid in
+  match Carton.Value.kind value with
+  | `A | `B | `D -> Fmt.invalid_arg "Invalid stem object"
+  | `C ->
+      let str = Carton.Value.string value in
+      let stem = Stem.of_string str in
+      let mail, blob, length, tbl = Result.get_ok stem in
+      let tokens = List.of_seq (Hashtbl.to_seq tbl) in
+      let mail = Carton.Uid.unsafe_of_string mail
+      and blob = Carton.Uid.unsafe_of_string blob in
+      { Format.mail; blob; length; tokens }
+
+let pstem pack req _server () =
+  let open Vifu.Response.Syntax in
+  try
+    match Vifu.Request.of_json req with
+    | Ok uids ->
+        let pack = Carton.copy pack in
+        let ts = List.map (stem_of_uid pack) uids in
+        let* () =
+          Vifu.Response.with_json req (Jsont.list (Format.stem ~uid:juid)) ts
+        in
+        Vifu.Response.respond `OK
+    | Error _ ->
+        let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
+        Vifu.Response.respond `Bad_request
+  with exn ->
+    let str = Fmt.str "Got an exception: %s" (Printexc.to_string exn) in
+    let* () = Vifu.Response.with_text req str in
+    Vifu.Response.respond `Not_found
 
 let stem pack req uid _server () =
   let open Vifu.Response.Syntax in
   try
     let pack = Carton.copy pack in
-    let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
-    let blob = Carton.Blob.make ~size in
-    let value = Carton.of_uid pack blob ~uid in
-    match Carton.Value.kind value with
-    | `A | `B | `D ->
-        let* () = Vifu.Response.with_text req "Invalid object (bad type)\n" in
-        Vifu.Response.respond `Not_found
-    | `C ->
-        let str = Carton.Value.string value in
-        let stem = Stem.of_string str in
-        let mail, blob, length, tbl = Result.get_ok stem in
-        let tokens = List.of_seq (Hashtbl.to_seq tbl) in
-        let mail = Carton.Uid.unsafe_of_string mail
-        and blob = Carton.Uid.unsafe_of_string blob in
-        let t = { Format.mail; blob; length; tokens } in
-        let uid =
-          let open Jsont in
-          let enc (uid : Carton.Uid.t) = Ohex.encode (uid :> string) in
-          let dec str = Carton.Uid.unsafe_of_string (Ohex.decode str) in
-          map ~enc ~dec string
-        in
-        let* () = Vifu.Response.with_json req (Format.stem ~uid) t in
-        Vifu.Response.respond `OK
+    let t = stem_of_uid pack uid in
+    let* () = Vifu.Response.with_json req (Format.stem ~uid:juid) t in
+    Vifu.Response.respond `OK
   with exn ->
     let str = Fmt.str "Got an exception: %s" (Printexc.to_string exn) in
     let* () = Vifu.Response.with_text req str in
@@ -233,15 +241,8 @@ let run _ cidr gateway port =
     let ctx = feed_string ctx ".stems" in
     to_hex (get ctx)
   in
-  let jquery =
-    let lang =
-      let open Jsont in
-      let enc (lang : Snowball.Language.t) = (lang :> string) in
-      let dec = language_of_string in
-      map ~enc ~dec string
-    in
-    Format.query ~lang
-  in
+  let jquery = Format.query ~lang:jlang in
+  let jstem = Jsont.(list juid) in
   let routes =
     let open Vifu.Route in
     let open Vifu.Uri in
@@ -253,6 +254,7 @@ let run _ cidr gateway port =
       get (rel / "script.js" /?? any) --> script;
       get (rel / "style.css" /?? any) --> style;
       get (rel / "stems" /?? any) --> stems (documents, hash_of_stems);
+      post (json_encoding jstem) (rel / "stems" /?? any) --> pstem pack;
       get (rel / "stem" /% uid /?? any) --> stem pack;
       post (json_encoding jquery) (rel / "query" /?? any) --> query;
       get (rel /?? any) --> index;
