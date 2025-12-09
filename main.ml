@@ -150,7 +150,7 @@ let show pack req uid _server () =
             let from = Flux.Source.seq seq in
             let* () =
               Vifu.Response.add ~field:"content-type"
-                "message/rfc822; charset=utf-8"
+                "text/plain; charset=utf-8"
             in
             let* () = Vifu.Response.with_source req from in
             Vifu.Response.respond `OK)

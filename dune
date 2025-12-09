@@ -50,12 +50,6 @@
  (modules format)
  (libraries fmt rosetta emile ptime jsont))
 
-; (library
-;  (name stem)
-;  (public_name blame.stem)
-;  (modules stem)
-;  (libraries carton digestif jsont stem.tokenizer stem.snowball stem.stopwords))
-
 (library
  (name emails)
  (public_name blame.emails)
