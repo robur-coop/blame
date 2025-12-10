@@ -38,8 +38,7 @@ conflicts: [ "result" {< "1.5"} ]
 build: [
   ["dune" "subst"] {dev}
   ["./source.sh"]
-  ["dune" "build" "-p" name "-j" jobs]
-  ["./install.sh"]
+  ["./build_and_install.sh"]
 ]
 synopsis: "A self-contained unikernel to provide a search engine from an archive of emails"
 x-ci-accept-failures: ["debian-11"]
