@@ -12,6 +12,15 @@ depends: [
   "vif" {= version}
   "mhttp"
   "mirage-crypto-rng-mkernel"
+  "emile"
+  "cmdliner"
+  "logs"
+  "fmt"
+  "fpath"
+  "hxd"
+  "gmp"
+  "jsont"
+  "digestif"
   "vifu"
 ]
 conflicts: [ "result" {< "1.5"} ]
