@@ -44,4 +44,5 @@ pin-depends: [
   [ "bm25.dev" "git+https://github.com/robur-coop/stem.git#22a9588d0090c151c6905d721a533177dd92a4bc" ]
   [ "blaze.dev" "git+https://github.com/dinosaure/blaze.git#99a8ddaa84059c67df4ed5527eff58cbb39dcdb0" ]
   [ "maildir.dev" "git+https://github.com/dinosaure/ocaml-maildir.git#597823c7d2d4fd2aef26a581f6828f2b458371ea" ]
+  [ "httpcats.dev" "git+https://github.com/robur-coop/httpcats.git#c107a79119562248bfd0513c80c4990eff4b4994" ]
 ]
