@@ -18,6 +18,7 @@
 (executable
  (name main)
  (modules main documents)
+ (public_name blame)
  (link_flags :standard -cclib "-z solo5-abi=hvt")
  (libraries
   blame.emails
