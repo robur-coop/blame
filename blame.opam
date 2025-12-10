@@ -21,6 +21,7 @@ depends: [
   "gmp"
   "jsont"
   "digestif"
+  "rosetta"
   "vifu"
 ]
 conflicts: [ "result" {< "1.5"} ]
