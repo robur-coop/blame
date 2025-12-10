@@ -22,6 +22,7 @@ depends: [
   "jsont"
   "digestif"
   "rosetta"
+  "encore"
   "vifu"
 ]
 conflicts: [ "result" {< "1.5"} ]
