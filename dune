@@ -98,7 +98,6 @@
    documents.ml
    (run
     %{exe:crunch.exe}
-    --with-comments
     --file
     index.html
     --file
