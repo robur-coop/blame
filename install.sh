@@ -8,3 +8,4 @@ cat >blame.install<<EOF
 bin: [
   "blame.hvt"
 ]
+EOF
