@@ -24,6 +24,14 @@ depends: [
   "rosetta"
   "encore"
   "vifu"
+  "bstr"
+  "carton"
+  "cachet"
+  "art"
+  "tls"
+  "blaze"
+  "stem"
+  "mrmime"
 ]
 conflicts: [ "result" {< "1.5"} ]
 build: [
