@@ -20,4 +20,4 @@ jobs:
       - name: Install dependencies
         run: opam install blame --verbose-on=blame
       - name: Check blame.hvt
-        run: file $(opam var bin)/blame/blame.hvt
+        run: file $(opam var bin)/blame.hvt
