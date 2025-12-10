@@ -6,6 +6,9 @@ archive, the user can launch the `blame.hvt` unikernel ([Solo5][solo5]) to
 obtain a web interface (on the specified IPv4 address) that allows them to
 search for emails by keyword.
 
+For more details about this unikernel, you can read [our article][blame-article]
+about how we developped it and what is the outcome.
+
 To use it, you will need to install `blaze` and `solo5` in order to create an
 archive and launch the unikernel.
 
@@ -34,17 +37,19 @@ sudo ip link set service up
 sudo ip link set tap0 up
 ```
 
-Finally, you can launch the unikernel with Solo5 and your archive:
+You need to install `blame` with `opam pin` (it's actually not possible to
+install `blame` with a sandboxed environment). Finally, you can launch the
+unikernel with Solo5 and your archive:
 ```shell
-$ solo5-hvt --mem=512 --net:service=tap0 --block:archive=pack.pack -- blame.hvt \
-  --ipv4=10.0.0.2/24 --color=always
+$ opam pin add https://github.com/robur-coop/blame
+$ solo5-hvt --mem=512 --net:service=tap0 --block:archive=pack.pack -- \
+  $(opam var bin)/blame.hvt --ipv4=10.0.0.2/24 --color=always
 ```
 
 A website is then accessible at the specified address (in our example,
-10.0.0.2). The web app starts by downloading (from the unikernel) a whole bunch
+10.0.0.2). The webapp starts by downloading (from the unikernel) a whole bunch
 of information and finally offers a search bar and a list of emails
 (downloadable) available from your archive.
-
 
 If you would like more details about the search engine, please read [our
 article][stem] on this topic.
@@ -53,3 +58,4 @@ article][stem] on this topic.
 [carton]: https://blog.robur.coop/articles/2025-01-07-carton-and-cachet.html
 [blaze]: https://github.com/dinosaure/blaze
 [solo5]: https://github.com/Solo5/solo5/
+[blame-article]: https://blog.robur.coop/articles/2025-04-12-ptt-search-webapp.html
