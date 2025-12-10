@@ -32,6 +32,7 @@ depends: [
   "blaze"
   "stem"
   "mrmime"
+  "brr"
 ]
 conflicts: [ "result" {< "1.5"} ]
 build: [
