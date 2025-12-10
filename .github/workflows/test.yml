@@ -19,3 +19,5 @@ jobs:
             *.opam
       - name: Install dependencies
         run: opam install blame
+      - name: Check blame.hvt
+        run: file $(opam var bin)/blame/blame.hvt
