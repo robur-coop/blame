@@ -31,4 +31,6 @@ pin-depends: [
   [ "zarith.dev"   "git+https://github.com/mirage/Zarith.git#df8969d9bb95cffca13e31a615189ab27ada0684" ]
   [ "httpcats.dev" "git+https://github.com/robur-coop/httpcats.git#75991cc9522fcb96851d19ceda6edc85d447386a" ]
   [ "mhttp.dev"    "git+https://github.com/robur-coop/mhttp.git#b2e55ae693b07ad3ef87c26c37c8f5d14c2e205c" ]
+  [ "mhttp-server.dev"    "git+https://github.com/robur-coop/mhttp.git#b2e55ae693b07ad3ef87c26c37c8f5d14c2e205c" ]
+  [ "mhttp-client.dev"    "git+https://github.com/robur-coop/mhttp.git#b2e55ae693b07ad3ef87c26c37c8f5d14c2e205c" ]
 ]
