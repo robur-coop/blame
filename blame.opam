@@ -12,6 +12,7 @@ depends: [
   "vif"
   "mirage-crypto-rng-mkernel"
   "vifu"
+  "brr"
   "progress"
   "flux"
   "carton"
