@@ -23,3 +23,4 @@
 [ ! -d "vendors/multipart_form" ] && opam source multipart_form --dir vendors/multipart_form
 [ ! -d "vendors/mrmime" ] && opam source mrmime --dir vendors/mrmime
 [ ! -d "vendors/prettym" ] && opam source prettym --dir vendors/prettym
+[ ! -d "vendors/utcp" ] && opam source utcp --dir vendors/utcp
