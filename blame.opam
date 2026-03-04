@@ -20,6 +20,7 @@ depends: [
   "encore"
   "cattery"
   "mcrunch"
+  "emile"
 ]
 build: [
   [make "all"]
