@@ -21,6 +21,7 @@ depends: [
   "cattery"
   "mcrunch"
   "emile"
+  "rosetta"
 ]
 build: [
   [make "all"]
