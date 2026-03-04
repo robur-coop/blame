@@ -1,5 +1,6 @@
 module RNG = Mirage_crypto_rng.Fortuna
 
+let () = Printexc.record_backtrace true
 let ( let@ ) finally fn = Fun.protect ~finally fn
 
 let uid =
@@ -184,9 +185,9 @@ let from_documents ~mime contents =
       let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
       Vifu.Response.respond `OK
 
-let script = from_documents ~mime:"application/javascript" Documents.script_js
-let style = from_documents ~mime:"text/css" Documents.style_css
-let index = from_documents ~mime:"text/html" Documents.index_html
+let script = from_documents ~mime:"application/javascript" Documents.script
+let style = from_documents ~mime:"text/css" Documents.style
+let index = from_documents ~mime:"text/html" Documents.index
 
 let none_if_stop lang =
   match List.assoc_opt lang Stopwords.words with
@@ -214,10 +215,10 @@ let query req _server () =
 let run _ cidr gateway port =
   let devices =
     let open Mkernel in
-    [ Mnet.stackv4 ~name:"service" ?gateway cidr; Emails.emails "archive" ]
+    [ Mnet.stack ~name:"service" ?gateway cidr; Emails.emails "archive" ]
   in
   Mkernel.run devices
-  @@ fun (daemon, tcpv4, _udpv4) ((pack, hash), documents, entries) () ->
+  @@ fun (daemon, tcp, _) ((pack, hash), documents, entries) () ->
   Logs.info (fun m -> m "%d documents(s)" (List.length documents));
   Logs.info (fun m -> m "%d email(s)" (List.length entries));
   let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
@@ -260,7 +261,7 @@ let run _ cidr gateway port =
       get (rel /?? any) --> index;
     ]
   in
-  Vifu.run ~cfg tcpv4 routes ()
+  Vifu.run ~cfg tcp routes ()
 
 open Cmdliner
 
