@@ -22,6 +22,8 @@ depends: [
   "mcrunch"
   "emile"
   "rosetta"
+  "stem"
+  "bm25"
 ]
 build: [
   [make "all"]
