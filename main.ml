@@ -1,3 +1,6 @@
+[@@@warning "-32"]
+[@@@warning "-26"]
+
 module RNG = Mirage_crypto_rng.Fortuna
 
 let () = Printexc.record_backtrace true
@@ -51,7 +54,7 @@ let list (entries, hash) req _server () =
     in
     Vifu.Response.respond `OK
 
-let stems (documents, hash) req _server () =
+let stems (documents, hash) req _server _ =
   let open Vifu.Response.Syntax in
   let hdrs = Vifu.Request.headers req in
   let if_none_match =
@@ -85,7 +88,7 @@ let stem_of_uid pack uid =
       and blob = Carton.Uid.unsafe_of_string blob in
       { Format.mail; blob; length; tokens }
 
-let pstem pack req _server () =
+let pstem pack req _server _ =
   let open Vifu.Response.Syntax in
   try
     match Vifu.Request.of_json req with
@@ -116,7 +119,7 @@ let stem pack req uid _server () =
     let* () = Vifu.Response.with_text req str in
     Vifu.Response.respond `Not_found
 
-let show pack req uid _server () =
+let show pack req uid _server _ =
   let open Vifu.Response.Syntax in
   try
     let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
@@ -167,7 +170,7 @@ let from_documents ~mime contents =
     in
     go Digestif.SHA1.empty 0
   in
-  fun req _server () ->
+  fun req _server _ ->
     let open Vifu.Response.Syntax in
     let* () = Vifu.Response.add ~field:"content-type" mime in
     let hdrs = Vifu.Request.headers req in
@@ -194,10 +197,50 @@ let none_if_stop lang =
   | Some stops -> fun stem -> if List.mem stem stops then None else Some stem
   | None -> Option.some
 
-let query req _server () =
+let kv ~name =
+  let fn blk () = Mpart.make blk in
+  Mkernel.(map fn [ block name ])
+
+type bm25 = { idf : Mpart.t; avgdl : float }
+
+let score bm25 query (tokens, length, mail) =
+  let fn acc token =
+    match Hashtbl.find_opt tokens (token :> string) with
+    | None -> acc
+    | Some freq ->
+        let freq = Float.of_int freq in
+        let idf =
+          Mpart.reader bm25.idf (fun reader ->
+              Mpart.lookup reader (Rowex.key token))
+        in
+        let idf = Int64.float_of_bits idf in
+        let _D = Float.of_int length in
+        let _n = freq *. (1.5 +. 1.) in
+        let _m = freq +. (1.5 *. (1. -. 0.75 +. (0.75 *. _D /. bm25.avgdl))) in
+        acc +. (idf *. (_n /. _m))
+  in
+  let sum = List.fold_left fn 0.0 query in
+  if sum <= 0.0 then None else Some (mail, sum)
+
+let score pool stems bm25 query q =
+  Cattery.use pool @@ fun (pack, blob) ->
+  let fn uid =
+    let value = Carton.of_uid pack blob ~uid in
+    let str = Carton.Value.string value in
+    let mail, _, length, tbl = Result.get_ok (Stem.of_string str) in
+    let mail = Carton.Uid.unsafe_of_string mail in
+    match score bm25 query (tbl, length, mail) with
+    | Some (uid, score) -> Flux.Bqueue.put q (uid, score)
+    | None -> Miou.yield ()
+  in
+  List.iter fn stems;
+  Flux.Bqueue.close q
+
+let query bm25 stems req _server pool =
   let open Vifu.Response.Syntax in
   match Vifu.Request.of_json req with
   | Ok { Format.lang; query } ->
+      Logs.debug (fun m -> m "Start to search: %S" query);
       let actions = Tokenizer.[ (Whitespace, Remove); (Bert, Remove) ] in
       let tokens = Tokenizer.run ~encoding:UTF_8 actions (Seq.return query) in
       let stemmer = Snowball.create ~encoding:UTF_8 lang in
@@ -205,9 +248,14 @@ let query req _server () =
       let@ () = fun () -> Snowball.remove stemmer in
       let fn = Fun.compose none_if_stop (Snowball.stem stemmer) in
       let tokens = Seq.filter_map fn tokens in
-      let tokens = List.of_seq tokens in
-      let* () = Vifu.Response.with_json req Format.response tokens in
-      Vifu.Response.respond `OK
+      let query = List.of_seq tokens in
+      let q = Flux.Bqueue.(create with_close 0x7ff) in
+      let prm = Miou.async @@ fun () -> score pool stems bm25 query q in
+      let seq = Flux.Bqueue.to_seq q in
+      let* () = Vifu.Response.with_json req (Format.scores ~uid:juid) seq in
+      let* () = Vifu.Response.respond `OK in
+      Miou.await_exn prm;
+      Vifu.Response.return ()
   | Error _ ->
       let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
       Vifu.Response.respond `Bad_request
@@ -215,12 +263,15 @@ let query req _server () =
 let run _ cidr gateway port =
   let devices =
     let open Mkernel in
-    [ Mnet.stack ~name:"service" ?gateway cidr; Emails.emails "archive" ]
+    [
+      Mnet.stack ~name:"service" ?gateway cidr;
+      Emails.emails "archive";
+      kv ~name:"rowex";
+    ]
   in
   Mkernel.run devices
-  @@ fun (daemon, tcp, _) ((pack, hash), documents, entries) () ->
-  Logs.info (fun m -> m "%d documents(s)" (List.length documents));
-  Logs.info (fun m -> m "%d email(s)" (List.length entries));
+  @@ fun (daemon, tcp, _) (pool, avgdl, stems, _entries) rowex () ->
+  let bm25 = { idf = rowex; avgdl } in
   let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
   let@ () =
    fun () ->
@@ -228,20 +279,6 @@ let run _ cidr gateway port =
     Mnet.kill daemon
   in
   let cfg = Vifu.Config.v port in
-  let hash_of_entries =
-    let open Digestif.SHA1 in
-    let ctx = empty in
-    let ctx = feed_string ctx hash in
-    let ctx = feed_string ctx ".emails" in
-    to_hex (get ctx)
-  in
-  let hash_of_stems =
-    let open Digestif.SHA1 in
-    let ctx = empty in
-    let ctx = feed_string ctx hash in
-    let ctx = feed_string ctx ".stems" in
-    to_hex (get ctx)
-  in
   let jquery = Format.query ~lang:jlang in
   let jstem = Jsont.(list juid) in
   let routes =
@@ -250,18 +287,14 @@ let run _ cidr gateway port =
     let open Vifu.Type in
     let any = Vifu.Uri.any in
     [
-      get (rel / "list" /?? any) --> list (entries, hash_of_entries);
-      get (rel / "get" /% uid /?? any) --> show pack;
       get (rel / "script.js" /?? any) --> script;
       get (rel / "style.css" /?? any) --> style;
-      get (rel / "stems" /?? any) --> stems (documents, hash_of_stems);
-      post (json_encoding jstem) (rel / "stems" /?? any) --> pstem pack;
-      get (rel / "stem" /% uid /?? any) --> stem pack;
-      post (json_encoding jquery) (rel / "query" /?? any) --> query;
+      post (json_encoding jquery) (rel / "query" /?? any) --> query bm25 stems;
       get (rel /?? any) --> index;
     ]
   in
-  Vifu.run ~cfg tcp routes ()
+  Logs.info (fun m -> m "HTTP server launched");
+  Vifu.run ~cfg tcp routes pool
 
 open Cmdliner
 

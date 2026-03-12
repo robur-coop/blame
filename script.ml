@@ -25,53 +25,7 @@ let bootf fmt =
   in
   Fmt.kstr fn fmt
 
-type bm25 = { idf : (string, float) Hashtbl.t; avgdl : float }
-
-let bm25_of_documents documents =
-  let _N = Float.of_int (List.length documents) in
-  let total_length =
-    let fn acc { Format.length; _ } = acc + length in
-    List.fold_left fn 0 documents |> Float.of_int
-  in
-  let df =
-    let df = Hashtbl.create 0x7ff in
-    let fn { Format.tokens; _ } =
-      let fn (token, _) =
-        match Hashtbl.find_opt df token with
-        | Some freq -> Hashtbl.replace df token (freq + 1)
-        | None -> Hashtbl.add df token 1
-      in
-      List.iter fn tokens
-    in
-    List.iter fn documents;
-    df
-  in
-  let avgdl = total_length /. _N in
-  let idf = Hashtbl.create 0x7ff in
-  let fn token freq =
-    let freq = Float.of_int freq in
-    let value = Float.(log (1. +. ((_N -. freq +. 0.5) /. (freq +. 0.5)))) in
-    Hashtbl.add idf token value
-  in
-  Hashtbl.iter fn df;
-  { idf; avgdl }
-
-let score bm25 query document =
-  let fn acc token =
-    match List.assoc_opt token document.Format.tokens with
-    | None -> acc
-    | Some freq ->
-        let freq = Float.of_int freq in
-        let idf = Hashtbl.find bm25.idf token in
-        let _D = Float.of_int document.length in
-        let _n = freq *. (1.5 +. 1.) in
-        let _m = freq +. (1.5 *. (1. -. 0.75 +. (0.75 *. _D /. bm25.avgdl))) in
-        acc +. (idf *. (_n /. _m))
-  in
-  let sum = List.fold_left fn 0.0 query in
-  if sum <= 0.0 then None else Some (document.mail, sum)
-
-let on_input documents bm25 _ev =
+let on_input _ev =
   El.set_class none false search_box;
   let query =
     Jv.get (El.to_jv search_bar) "value" |> Jv.to_jstr |> Jstr.to_string
@@ -94,13 +48,13 @@ let on_input documents bm25 _ev =
     let open Fut.Result_syntax in
     let* resp = Brr_io.Fetch.request req in
     let body = Brr_io.Fetch.Response.as_body resp in
-    let* query = Brr_io.Fetch.Body.json body in
-    let* query = Jsont_brr.decode_jv Format.response query |> Fut.return in
+    let* scores = Brr_io.Fetch.Body.json body in
+    let fmt = Format.scores ~uid:Jsont.string in
+    let* scores = Jsont_brr.decode_jv fmt scores |> Fut.return in
     let scores =
-      let lst = List.filter_map (score bm25 query) documents in
       let tbl = Hashtbl.create 0x7ff in
       let fn (uid, score) = Hashtbl.add tbl uid score in
-      List.iter fn lst;
+      Seq.iter fn scores;
       tbl
     in
     let topics =
@@ -136,29 +90,6 @@ let on_input documents bm25 _ev =
   | Ok () -> ()
   | Error _err -> print_endline "Got an error"
 
-let progress total =
-  let current = ref 0 in
-  let el = bootf "> 0/%d document(s) downloaded" total in
-  let reporter n = current := !current + n in
-  let display () =
-    let percent = !current * 100 / total in
-    let str =
-      Fmt.str "> %d/%d document(s) downloaded (%d%%)" !current total percent
-    in
-    El.set_children el El.[ txt' str ]
-  in
-  (reporter, display)
-
-let bulk len lst =
-  let rec go cur acc rem lst =
-    match (rem, cur, lst) with
-    | _, [], [] -> acc
-    | _, cur, [] -> cur :: acc
-    | 0, cur, x :: r -> go [ x ] (cur :: acc) (len - 1) r
-    | n, cur, x :: r -> go (x :: cur) acc (n - 1) r
-  in
-  go [] [] len lst
-
 let run () =
   let open Fut.Result_syntax in
   let req = Brr_io.Fetch.Request.v (jstrf "/list") in
@@ -192,49 +123,7 @@ let run () =
         go r
   in
   let* () = go emails in
-  let req = Brr_io.Fetch.Request.v (jstrf "/stems") in
-  let* resp = Brr_io.Fetch.request req in
-  let body = Brr_io.Fetch.Response.as_body resp in
-  let* stems = Brr_io.Fetch.Body.json body in
-  let* stems =
-    let uid = Jsont.string in
-    Jsont_brr.decode_jv (Jsont.list uid) stems |> Fut.return
-  in
-  let _ = bootf "> %d document(s)" (List.length stems) in
-  let reporter, display = progress (List.length stems) in
-  let fn uids =
-    let method' = jstrf "POST"
-    and json = Jsont_brr.encode Jsont.(list string) uids
-    and headers =
-      Brr_io.Fetch.Headers.of_assoc
-        [ (jstrf "Content-Type", jstrf "application/json") ]
-    in
-    let json = Result.get_ok json in
-    let body = Brr_io.Fetch.Body.of_jstr json in
-    let init = Brr_io.Fetch.Request.init ~body ~headers ~method' () in
-    let req = Brr_io.Fetch.Request.v ~init (jstrf "/stems") in
-    let* resp = Brr_io.Fetch.request req in
-    let body = Brr_io.Fetch.Response.as_body resp in
-    let* stems = Brr_io.Fetch.Body.json body in
-    let stems =
-      Jsont_brr.decode_jv (Jsont.list (Format.stem ~uid:Jsont.string)) stems
-    in
-    reporter 50;
-    display ();
-    Fut.return stems
-  in
-  let stems = bulk 50 stems in
-  let documents = List.map fn stems in
-  let* documents = Fut.of_list documents |> Fut.map Result.ok in
-  let documents = List.filter_map Result.to_option documents in
-  let documents = List.flatten documents in
-  let _ = bootf "> document(s) downloaded!" in
-  let _ = bootf "> synthetize them" in
-  let bm25 = bm25_of_documents documents in
-  let _ = bootf "> document(s) synthetized!" in
-  let _ =
-    Ev.listen Ev.input (on_input documents bm25) (El.as_target search_bar)
-  in
+  let _ = Ev.listen Ev.input on_input (El.as_target search_bar) in
   El.set_class hidden true crt;
   El.set_class hidden false title;
   El.set_class hidden false search_box;

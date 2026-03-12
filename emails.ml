@@ -167,7 +167,20 @@ let unstrctrd_with_encoded_words_to_string v =
 
 let hdopt = function x :: _ -> Some x | [] -> None
 
-let to_entry pack (uid, hdrs, docs) =
+type archive = {
+  biggest_object : int;
+  total_length : int;
+  stems : Carton.Uid.t list;
+  mails : mail list;
+}
+
+and mail = {
+  uid : Carton.Uid.t;
+  hdrs : Carton.Uid.t;
+  docs : (Carton.Uid.t, Snowball.Language.t) Format.doc list;
+}
+
+let to_entry pack { uid; hdrs; docs } =
   let ( let* ) = Option.bind in
   let size = Carton.size_of_uid pack ~uid:hdrs Carton.Size.zero in
   let blob = Carton.Blob.make ~size in
@@ -234,22 +247,75 @@ let emails ?cachesize name =
     in
     let index = Hashtbl.create 0x7ff in
     let from = Carton_miou_flux.entries ~threads:0 pack oracle in
-    let via = Flux.Flow.filter_map (record_and_filter index) in
-    let into = Flux.Sink.list in
-    let documents_and_emails, _leftover = Flux.Stream.run ~from ~via ~into in
-    let documents, emails = List.partition_map Fun.id documents_and_emails in
-    Log.info (fun m ->
-        m "%d document(s) and %d email(s)" (List.length documents)
-          (List.length emails));
-    let pack =
-      let index uid = Carton.Local (Hashtbl.find index uid) in
-      Carton.with_index pack index
+    let into =
+      let init () =
+        let biggest_object = 0
+        and total_length = 0
+        and stems = []
+        and mails = [] in
+        { biggest_object; total_length; stems; mails }
+      and push t (value, offset, uid) =
+        Hashtbl.add index uid offset;
+        let length = Carton.Value.length value in
+        let biggest_object = Int.max length t.biggest_object in
+        let t = { t with biggest_object } in
+        match Carton.Value.kind value with
+        | `A ->
+            let str = Carton.Value.string value in
+            let m = Email.of_string str in
+            begin match Result.to_option m with
+            | None -> t
+            | Some ({ Email.Skeleton.headers; _ }, s) ->
+                let hdrs = Carton.Uid.unsafe_of_string headers in
+                let docs = semantic_to_docs s in
+                if docs = [] then t
+                else
+                  let mail = { uid; hdrs; docs } in
+                  { t with mails = mail :: t.mails }
+            end
+        | `B | `D -> t
+        | `C -> begin
+            let str = Carton.Value.string value in
+            let _, _, length, _ = Result.get_ok (Stem.of_string str) in
+            let t = { t with total_length = t.total_length + length } in
+            let t = { t with stems = uid :: t.stems } in
+            t
+          end
+      and full _ = false
+      and stop = Fun.id in
+      Flux.Sink { init; push; full; stop }
     in
-    let from = Flux.Source.list emails in
+    let via = Flux.Flow.identity in
+    let archive, _leftover = Flux.Stream.run ~from ~via ~into in
+    let avgdl =
+      let _N = Float.of_int (List.length archive.stems) in
+      let total_length = Float.of_int archive.total_length in
+      total_length /. _N
+    in
+    let index uid = Carton.Local (Hashtbl.find index uid) in
+    let pack = Carton.with_index pack index in
+    let size = Carton.Size.of_int_exn archive.biggest_object in
+    let pool =
+      Cattery.create 128 @@ fun () ->
+      let pack = Carton.copy pack in
+      let blob = Carton.Blob.make ~size in
+      (pack, blob)
+    in
+    let from = Flux.Source.list archive.mails in
+    let via = Flux.Flow.filter_map (to_entry pack) in
+    let into = Flux.Sink.list in
+    let entries, _leftover = Flux.Stream.run ~from ~via ~into in
+    (pool, avgdl, archive.stems, entries)
+    (*
+    (* /// *)
+    (* reynir: I copied this code, but it doesn't type check. Not sure how to
+       compute entries now. *)
+    let from = Flux.Source.list documents in
     let via = Flux.Flow.filter_map (to_entry pack) in
     let into = Flux.Sink.list in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
     ((pack, oracle.Carton.hash), documents, entries)
+    *)
   in
   let open Mkernel in
   map fn [ block name ]

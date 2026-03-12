@@ -11,7 +11,9 @@
   stem.stopwords
   gmp
   mirage-crypto-rng-mkernel
-  vifu)
+  mpart
+  vifu
+  cattery)
  (foreign_stubs
   (language c)
   (names manifest)))
@@ -45,9 +47,11 @@
   hxd.string
   emile
   blaze.email
+  blaze.stem
   digestif
   mkernel
-  carton-miou.flux))
+  carton-miou.flux
+  cattery))
 
 (rule
  (targets manifest.c)

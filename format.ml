@@ -100,4 +100,25 @@ let query ~lang =
   let fn lang query = { lang; query } in
   Object.map fn |> lang |> query |> Object.finish
 
-let response = Jsont.(list string)
+let iter fn acc seq =
+  let rec go acc idx seq =
+    match Seq.uncons seq with
+    | Some (elt, seq) ->
+        let acc = fn acc idx elt in
+        go acc (succ idx) seq
+    | None -> acc
+  in
+  go acc 0 seq
+
+let seq elt =
+  Jsont.Array.map ~enc:{ Jsont.Array.enc = iter } elt |> Jsont.Array.array
+
+let scores ~uid =
+  let entry =
+    let open Jsont in
+    let document = Object.mem "uid" ~enc:fst uid in
+    let score = Object.mem "score" ~enc:snd number in
+    let fn document score = (document, score) in
+    Object.map fn |> document |> score |> Object.finish
+  in
+  seq entry
