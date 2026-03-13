@@ -25,7 +25,12 @@ let bootf fmt =
   in
   Fmt.kstr fn fmt
 
+let timeout : Brr.G.timer_id ref = ref 0
+(* It seems passing invalid IDs to [Brr.G.stop_time] does nothing *)
+
 let on_input _ev =
+  Brr.G.stop_timer !timeout;
+  timeout := Brr.G.set_timeout ~ms:1000 @@ fun () ->
   El.set_class none false search_box;
   let query =
     Jv.get (El.to_jv search_bar) "value" |> Jv.to_jstr |> Jstr.to_string
