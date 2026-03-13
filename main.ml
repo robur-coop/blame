@@ -34,7 +34,7 @@ let jlang =
   let dec = language_of_string in
   map ~enc ~dec string
 
-let list (entries, hash) req _server () =
+let list (entries, hash) req _server _ =
   let open Vifu.Response.Syntax in
   let hdrs = Vifu.Request.headers req in
   let if_none_match =
@@ -119,11 +119,11 @@ let stem pack req uid _server () =
     let* () = Vifu.Response.with_text req str in
     Vifu.Response.respond `Not_found
 
-let show pack req uid _server _ =
+let show req uid _server pool =
   let open Vifu.Response.Syntax in
+  Cattery.use pool @@ fun (pack, blob) ->
   try
     let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
-    let blob = Carton.Blob.make ~size in
     let value = Carton.of_uid pack blob ~uid in
     match Carton.Value.kind value with
     | `B | `C | `D ->
@@ -270,7 +270,7 @@ let run _ cidr gateway port =
     ]
   in
   Mkernel.run devices
-  @@ fun (daemon, tcp, _) (pool, avgdl, stems, _entries) rowex () ->
+  @@ fun (daemon, tcp, _) (pool, avgdl, stems, entries, hash) rowex () ->
   let bm25 = { idf = rowex; avgdl } in
   let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
   let@ () =
@@ -287,6 +287,8 @@ let run _ cidr gateway port =
     let open Vifu.Type in
     let any = Vifu.Uri.any in
     [
+      get (rel / "list" /?? any) --> list (entries, hash);
+      get (rel / "get" /% uid /?? any) --> show;
       get (rel / "script.js" /?? any) --> script;
       get (rel / "style.css" /?? any) --> style;
       post (json_encoding jquery) (rel / "query" /?? any) --> query bm25 stems;

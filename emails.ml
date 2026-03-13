@@ -305,7 +305,7 @@ let emails ?cachesize name =
     let via = Flux.Flow.filter_map (to_entry pack) in
     let into = Flux.Sink.list in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
-    (pool, avgdl, archive.stems, entries)
+    (pool, avgdl, archive.stems, entries, oracle.Carton.hash)
     (*
     (* /// *)
     (* reynir: I copied this code, but it doesn't type check. Not sure how to
