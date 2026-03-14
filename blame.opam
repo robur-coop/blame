@@ -24,6 +24,7 @@ depends: [
   "rosetta"
   "stem"
   "bm25"
+  "blaze"
 ]
 build: [
   [make "all"]
