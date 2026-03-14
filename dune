@@ -11,7 +11,7 @@
   stem.stopwords
   gmp
   mirage-crypto-rng-mkernel
-  mpart
+  trie
   vifu
   cattery)
  (foreign_stubs
@@ -70,7 +70,7 @@
 
 (rule
  (targets documents.ml)
- (deps index.html script.js style.css)
+ (deps index.html script.js style.css email.html)
  (action
   (with-stdout-to
    documents.ml
@@ -81,6 +81,8 @@
     --file
     script:script.js
     --file
-    style:style.css))))
+    style:style.css
+    --file
+    email:email.html))))
 
 (vendored_dirs vendors)

@@ -1,4 +1,4 @@
 (executable
  (name precompute)
  (enabled_if (= %{context_name} "default"))
- (libraries bancos carton carton-miou.flux blaze.stem blame.format flux cmdliner))
+ (libraries art trie unix carton carton-miou.flux blaze.stem blame.format flux cmdliner))

@@ -13,28 +13,6 @@ let emile_to_utf_8_string = function
   | { Emile.name = Some _; local; domain } ->
       Emile.address_to_string (local, domain)
 
-(*
-      let buf = Buffer.create 0x7ff in
-      let fn = function
-        | `Dot -> Buffer.add_string buf ". "
-        | `Word (`Atom str) ->
-            Buffer.add_string buf str;
-            Buffer.add_char buf ' '
-        | `Word (`String str) ->
-            Buffer.add_char buf '"';
-            Buffer.add_string buf str;
-            Buffer.add_string buf "\" "
-        | `Encoded (charset, Emile.(Quoted_printable (Ok str) | Base64 (Ok str))) ->
-            let str' = Rosetta.to_utf_8_string ~charset str in
-            let str' = Option.value ~default:str str' in
-            Buffer.add_string buf str';
-            Buffer.add_char buf ' '
-        | `Encoded _ -> () in
-      List.iter fn phrase;
-      let name = Buffer.contents buf in
-      Fmt.str "%s<%s>" name (Emile.address_to_string (local, domain))
-  *)
-
 let email ~uid ~lang =
   let open Jsont in
   let title = Object.mem "title" ~enc:(fun t -> t.title) string in

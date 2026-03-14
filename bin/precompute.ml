@@ -42,13 +42,35 @@ let identify =
   let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
   { Carton.First_pass.init; feed; serialize }
 
-let run _quiet archive rowex =
+let output_int32_le =
+  let tmp = Bytes.create 4 in
+  fun buf value ->
+    Bytes.set_int32_le tmp 0 (Int32.of_int value);
+    Buffer.add_bytes buf tmp
+
+let output_float_le =
+  let tmp = Bytes.create 8 in
+  fun buf flt ->
+    let flt = Int64.bits_of_float flt in
+    Bytes.set_int64_le tmp 0 flt;
+    Buffer.add_bytes buf tmp
+
+let to_string (idf, entries) =
+  let buf = Buffer.create 0x7ff in
+  output_float_le buf idf;
+  output_int32_le buf (List.length entries);
+  let fn ((uid : Carton.Uid.t), freq, length) =
+    Buffer.add_string buf (uid :> string);
+    output_float_le buf freq;
+    output_int32_le buf length
+  in
+  List.iter fn entries;
+  Buffer.contents buf
+
+let run _quiet archive filepath pagesize =
   Miou.run @@ fun () ->
   let fd = Unix.openfile archive Unix.[ O_RDONLY ] 0o644 in
   let finally () = Unix.close fd in
-  Fun.protect ~finally @@ fun () ->
-  let rowex = Bancos.openfile ~readers:1 ~writers:1 rowex in
-  let finally () = Bancos.close rowex in
   Fun.protect ~finally @@ fun () ->
   let ref_length = Digestif.SHA1.digest_size in
   let from = Flux.Source.file ~filename:archive 0x7ff in
@@ -68,7 +90,7 @@ let run _quiet archive rowex =
         array1_of_genarray barr
       in
       let { Unix.st_size; _ } = Unix.fstat fd in
-      Cachet.make ?cachesize:None (*FIXME*) ~pagesize:512 ~map (fd, st_size)
+      Cachet.make ?cachesize:None ~pagesize ~map (fd, st_size)
     in
     Carton.of_cache cache ~z ~allocate ~ref_length index
   in
@@ -78,29 +100,41 @@ let run _quiet archive rowex =
   let into = Flux.Sink.list in
   let documents, _leftover = Flux.Stream.run ~from ~via ~into in
   let _N = Float.of_int (List.length documents) in
-  let df =
-    let df = Hashtbl.create 0x7ff in
-    let fn { Format.tokens; _ } =
-      let fn (token, _) =
-        match Hashtbl.find_opt df token with
-        | Some freq -> Hashtbl.replace df token (freq + 1)
-        | None -> Hashtbl.add df token 1
-      in
-      List.iter fn tokens
+  let df = Art.make () in
+  let fn { Format.tokens; _ } =
+    let fn (token, _) =
+      let token = Art.key token in
+      match Art.find_opt df token with
+      | Some freq -> Art.insert df token (freq + 1)
+      | None -> Art.insert df token 1
     in
-    List.iter fn documents;
-    df
+    List.iter fn tokens
   in
-  let fn token freq cmds =
+  List.iter fn documents;
+  let fn _token freq =
     let freq = Float.of_int freq in
-    let value = Float.(log (1. +. ((_N -. freq +. 0.5) /. (freq +. 0.5)))) in
-    let value = Int64.bits_of_float value in
-    let token = Rowex.key token in
-    Bancos.insert rowex token value :: cmds
+    Float.(log (1. +. ((_N -. freq +. 0.5) /. (freq +. 0.5))))
   in
-  let cmds = Hashtbl.fold fn df [] in
-  let fn cmd = match Bancos.await cmd with `Ok -> () | _ -> assert false in
-  List.iter fn cmds (* NOTE(dinosaure): we should use [rev_iter]. *)
+  let idf = Art.map ~f:fn df in
+  let trie = Trie.create () in
+  let fn { Format.mail; tokens; length; _ } =
+    let fn (token, count) =
+      let entry = (mail, Float.of_int count, length) in
+      let value =
+        match Trie.find trie token with
+        | idf, entries -> (idf, entry :: entries)
+        | exception Not_found ->
+            let idf = Art.find idf (Art.unsafe_key token) in
+            (idf, [ entry ])
+      in
+      Trie.insert trie token value
+    in
+    List.iter fn tokens
+  in
+  List.iter fn documents;
+  let oc = open_out_bin filepath in
+  Trie.serialize to_string oc ~pagesize trie;
+  close_out oc
 
 open Cmdliner
 
@@ -108,13 +142,17 @@ let archive =
   let doc = Arg.info ~doc:"The email archive" [ "archive"; "email-archive" ] in
   Arg.(required & opt (some file) None & doc)
 
-let rowex =
-  let doc = Arg.info ~doc:"The resulting rowex file" [ "rowex" ] in
-  Arg.(required & opt (some string) None & doc)
+let trie =
+  let doc = "The trie file" in
+  Arg.(required & opt (some string) None & info [ "trie" ] ~doc)
+
+let pagesize =
+  let doc = "The pagesize used for our trie file" in
+  Arg.(value & opt int 4096 & info [ "pagesize" ] ~doc)
 
 let cmd =
   let info = Cmd.info "precompute" in
-  let term = Term.(const run $ const () $ archive $ rowex) in
+  let term = Term.(const run $ const () $ archive $ trie $ pagesize) in
   Cmd.v info term
 
 let () = Cmd.(exit @@ eval cmd)

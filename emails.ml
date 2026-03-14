@@ -167,10 +167,10 @@ let unstrctrd_with_encoded_words_to_string v =
 
 let hdopt = function x :: _ -> Some x | [] -> None
 
-type archive = {
+type t = {
   biggest_object : int;
   total_length : int;
-  stems : Carton.Uid.t list;
+  stems : int;
   mails : mail list;
 }
 
@@ -251,7 +251,7 @@ let emails ?cachesize name =
       let init () =
         let biggest_object = 0
         and total_length = 0
-        and stems = []
+        and stems = 0
         and mails = [] in
         { biggest_object; total_length; stems; mails }
       and push t (value, offset, uid) =
@@ -274,48 +274,37 @@ let emails ?cachesize name =
                   { t with mails = mail :: t.mails }
             end
         | `B | `D -> t
-        | `C -> begin
+        | `C ->
             let str = Carton.Value.string value in
             let _, _, length, _ = Result.get_ok (Stem.of_string str) in
-            let t = { t with total_length = t.total_length + length } in
-            let t = { t with stems = uid :: t.stems } in
-            t
-          end
+            let stems = t.stems + 1
+            and total_length = t.total_length + length in
+            { t with stems; total_length }
       and full _ = false
       and stop = Fun.id in
       Flux.Sink { init; push; full; stop }
     in
     let via = Flux.Flow.identity in
-    let archive, _leftover = Flux.Stream.run ~from ~via ~into in
+    let t, _leftover = Flux.Stream.run ~from ~via ~into in
     let avgdl =
-      let _N = Float.of_int (List.length archive.stems) in
-      let total_length = Float.of_int archive.total_length in
+      let _N = Float.of_int t.stems in
+      let total_length = Float.of_int t.total_length in
       total_length /. _N
     in
     let index uid = Carton.Local (Hashtbl.find index uid) in
     let pack = Carton.with_index pack index in
-    let size = Carton.Size.of_int_exn archive.biggest_object in
+    let size = Carton.Size.of_int_exn t.biggest_object in
     let pool =
       Cattery.create 128 @@ fun () ->
       let pack = Carton.copy pack in
       let blob = Carton.Blob.make ~size in
       (pack, blob)
     in
-    let from = Flux.Source.list archive.mails in
+    let from = Flux.Source.list t.mails in
     let via = Flux.Flow.filter_map (to_entry pack) in
     let into = Flux.Sink.list in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
-    (pool, avgdl, archive.stems, entries, oracle.Carton.hash)
-    (*
-    (* /// *)
-    (* reynir: I copied this code, but it doesn't type check. Not sure how to
-       compute entries now. *)
-    let from = Flux.Source.list documents in
-    let via = Flux.Flow.filter_map (to_entry pack) in
-    let into = Flux.Sink.list in
-    let entries, _leftover = Flux.Stream.run ~from ~via ~into in
-    ((pack, oracle.Carton.hash), documents, entries)
-    *)
+    (pool, avgdl, entries, oracle.hash)
   in
   let open Mkernel in
   map fn [ block name ]

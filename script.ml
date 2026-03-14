@@ -1,40 +1,95 @@
 open Brr
 
 let jstrf fmt = Fmt.kstr Jstr.v fmt
-let hidden = jstrf "hidden"
-let none = jstrf "none"
-let title = Document.find_el_by_id G.document (Jstr.v "title") |> Option.get
-
-let search_box =
-  Document.find_el_by_id G.document (Jstr.v "searchBox") |> Option.get
-
-let topics_list =
-  Document.find_el_by_id G.document (Jstr.v "topicsList") |> Option.get
 
 let search_bar =
   Document.find_el_by_id G.document (Jstr.v "searchBar") |> Option.get
 
-let crt = Document.find_el_by_id G.document (jstrf "crt") |> Option.get
-let boot = Document.find_el_by_id G.document (jstrf "boot") |> Option.get
+let results_div =
+  Document.find_el_by_id G.document (Jstr.v "results") |> Option.get
 
-let bootf fmt =
-  let fn txt =
-    let pre = El.pre [ El.txt' txt ] in
-    El.append_children boot [ pre ];
-    pre
-  in
-  Fmt.kstr fn fmt
+let status_dot =
+  Document.find_el_by_id G.document (Jstr.v "statusDot") |> Option.get
 
-let timeout : Brr.G.timer_id ref = ref 0
-(* It seems passing invalid IDs to [Brr.G.stop_time] does nothing *)
+let status_text =
+  Document.find_el_by_id G.document (Jstr.v "statusText") |> Option.get
 
-let on_input _ev =
-  Brr.G.stop_timer !timeout;
-  timeout := Brr.G.set_timeout ~ms:1000 @@ fun () ->
-  El.set_class none false search_box;
-  let query =
-    Jv.get (El.to_jv search_bar) "value" |> Jv.to_jstr |> Jstr.to_string
-  in
+type meta = { title : string; from : string }
+
+let metadata : (string, meta) Hashtbl.t = Hashtbl.create 0x100
+
+let score_entry =
+  let open Jsont in
+  let uid = Object.mem "uid" ~enc:fst string in
+  let score = Object.mem "score" ~enc:snd number in
+  let fn uid score = (uid, score) in
+  Object.map fn |> uid |> score |> Object.finish
+
+let truncate_uid uid =
+  if String.length uid > 16 then String.sub uid 0 16 ^ "..." else uid
+
+let render_results scores =
+  El.set_children results_div [];
+  let scores = List.sort (fun (_, a) (_, b) -> Float.compare b a) scores in
+  match scores with
+  | [] -> El.set_children results_div [ El.p [ El.txt' "no results." ] ]
+  | _ ->
+      let fn (uid, _score) =
+        match Hashtbl.find_opt metadata uid with
+        | Some m ->
+            let div =
+              El.div
+                ~at:At.[ class' (jstrf "result") ]
+                [
+                  El.a
+                    ~at:At.[ href (jstrf "/email/%s" uid) ]
+                    [ El.txt' m.title ];
+                  El.div
+                    ~at:At.[ class' (jstrf "result-meta") ]
+                    [ El.span [ El.txt' m.from ] ];
+                ]
+            in
+            El.append_children results_div [ div ]
+        | None ->
+            let div =
+              El.div
+                ~at:At.[ class' (jstrf "result") ]
+                [
+                  El.div
+                    ~at:At.[ class' (jstrf "result-uid") ]
+                    [
+                      El.a
+                        ~at:At.[ href (jstrf "/email/%s" uid) ]
+                        [ El.txt' (truncate_uid uid) ];
+                    ];
+                ]
+            in
+            El.append_children results_div [ div ]
+      in
+      List.iter fn scores
+
+let debounce_timer : Jv.t option ref = ref None
+let current_abort : Abort.t option ref = ref None
+
+let clear_timer () =
+  match !debounce_timer with
+  | Some t ->
+      ignore (Jv.call Jv.global "clearTimeout" [| t |]);
+      debounce_timer := None
+  | None -> ()
+
+let abort_previous () =
+  match !current_abort with
+  | Some ctrl ->
+      Abort.abort ctrl;
+      current_abort := None
+  | None -> ()
+
+let do_search query =
+  abort_previous ();
+  let ctrl = Abort.controller () in
+  current_abort := Some ctrl;
+  let signal = Abort.signal ctrl in
   let json =
     Jsont_brr.encode
       (Format.query ~lang:Jsont.string)
@@ -47,55 +102,55 @@ let on_input _ev =
     Brr_io.Fetch.Headers.of_assoc
       [ (jstrf "Content-Type", jstrf "application/json") ]
   in
-  let init = Brr_io.Fetch.Request.init ~body ~headers ~method' () in
+  let init = Brr_io.Fetch.Request.init ~body ~headers ~method' ~signal () in
   let req = Brr_io.Fetch.Request.v ~init (jstrf "/query") in
   let run () =
     let open Fut.Result_syntax in
     let* resp = Brr_io.Fetch.request req in
     let body = Brr_io.Fetch.Response.as_body resp in
-    let* scores = Brr_io.Fetch.Body.json body in
-    let fmt = Format.scores ~uid:Jsont.string in
-    let* scores = Jsont_brr.decode_jv fmt scores |> Fut.return in
-    let scores =
-      let tbl = Hashtbl.create 0x7ff in
-      let fn (uid, score) = Hashtbl.add tbl uid score in
-      Seq.iter fn scores;
-      tbl
+    let* json = Brr_io.Fetch.Body.json body in
+    let* scores =
+      Jsont_brr.decode_jv (Jsont.list score_entry) json |> Fut.return
     in
-    let topics =
-      Brr.El.fold_find_by_selector ~root:topics_list
-        (fun el acc -> el :: acc)
-        (jstrf ".topic") []
-    in
-    if Hashtbl.length scores <= 0 then (
-      let fn el = El.set_class hidden false el in
-      El.set_class none true search_box;
-      List.iter fn topics;
-      Fut.return (Ok ()))
-    else
-      let fn acc el =
-        let uid = El.prop El.Prop.id el |> Jstr.to_string in
-        match Hashtbl.find_opt scores uid with
-        | Some score ->
-            El.set_class hidden false el;
-            (score, el) :: acc
-        | None ->
-            El.set_class hidden true el;
-            acc
-      in
-      let visible_divs = List.fold_left fn [] topics in
-      let visible_divs =
-        List.sort (fun (a, _) (b, _) -> Float.compare b a) visible_divs
-      in
-      let fn (_, el) = El.append_children topics_list [ el ] in
-      List.iter fn visible_divs;
-      Fut.return (Ok ())
+    render_results scores;
+    Fut.return (Ok ())
   in
   Fut.await (run ()) @@ function
   | Ok () -> ()
-  | Error _err -> print_endline "Got an error"
+  | Error err ->
+      let name = Jv.Error.name err in
+      if not (Jstr.equal name (Jstr.v "AbortError")) then
+        let msg = Jv.Error.message err |> Jstr.to_string in
+        El.set_children results_div
+          [
+            El.p
+              ~at:At.[ class' (jstrf "error-msg") ]
+              [ El.txt' (Fmt.str "error: %s" msg) ];
+          ]
 
-let run () =
+let on_input _ev =
+  let query =
+    Jv.get (El.to_jv search_bar) "value" |> Jv.to_jstr |> Jstr.to_string
+  in
+  clear_timer ();
+  if String.length query = 0 then begin
+    abort_previous ();
+    El.set_children results_div []
+  end
+  else
+    let cb = Jv.callback ~arity:1 (fun _ -> do_search query) in
+    let t = Jv.call Jv.global "setTimeout" [| cb; Jv.of_int 300 |] in
+    debounce_timer := Some t
+
+let set_status_ready () =
+  El.set_at (jstrf "class") (Some (jstrf "dot ready")) status_dot;
+  El.set_children status_text [ El.txt' "ready" ]
+
+let set_status_error msg =
+  El.set_at (jstrf "class") (Some (jstrf "dot")) status_dot;
+  El.set_children status_text [ El.txt' (Fmt.str "error: %s" msg) ]
+
+let load_metadata () =
   let open Fut.Result_syntax in
   let req = Brr_io.Fetch.Request.v (jstrf "/list") in
   let* resp = Brr_io.Fetch.request req in
@@ -107,35 +162,18 @@ let run () =
     Jsont_brr.decode_jv (Jsont.list (Format.email ~uid ~lang)) emails
     |> Fut.return
   in
-  let _ = bootf "> %d email(s)" (List.length emails) in
-  let rec go = function
-    | [] -> Fut.return (Ok ())
-    | x :: r ->
-        let from = Format.emile_to_utf_8_string x.Format.from in
-        let div =
-          El.div
-            ~at:At.[ class' (jstrf "topic"); id (jstrf "%s" x.Format.uid) ]
-            [
-              El.a
-                ~at:At.[ href (jstrf "/get/%s" x.Format.uid) ]
-                [ El.txt' x.Format.title ];
-              El.div
-                ~at:At.[ class' (jstrf "details-wrapper") ]
-                [ El.div ~at:At.[ class' (jstrf "details") ] [ El.txt' from ] ];
-            ]
-        in
-        El.append_children topics_list [ div ];
-        go r
+  let fn (e : (string, string) Format.t) =
+    let from = Format.emile_to_utf_8_string e.from in
+    Hashtbl.replace metadata e.uid { title = e.title; from }
   in
-  let* () = go emails in
-  let _ = Ev.listen Ev.input on_input (El.as_target search_bar) in
-  El.set_class hidden true crt;
-  El.set_class hidden false title;
-  El.set_class hidden false search_box;
-  El.set_class hidden false topics_list;
+  List.iter fn emails;
   Fut.return (Ok ())
 
 let () =
-  Fut.await (run ()) @@ function
-  | Ok () -> ()
-  | Error _err -> print_endline "Got an error"
+  let _ = Ev.listen Ev.input on_input (El.as_target search_bar) in
+  Fut.await (load_metadata ()) @@ fun result ->
+  match result with
+  | Ok () -> set_status_ready ()
+  | Error err ->
+      let msg = Jv.Error.message err |> Jstr.to_string in
+      set_status_error msg
