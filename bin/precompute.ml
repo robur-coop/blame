@@ -1,3 +1,10 @@
+type t = {
+  length : int;
+  mail : Carton.Uid.t;
+  blob : Carton.Uid.t;
+  tokens : (string * int) list;
+}
+
 let record_and_filter index (value, cursor, uid) =
   Hashtbl.add index uid cursor;
   match Carton.Value.kind value with
@@ -9,7 +16,7 @@ let record_and_filter index (value, cursor, uid) =
       let tokens = List.of_seq (Hashtbl.to_seq tbl) in
       let mail = Carton.Uid.unsafe_of_string mail
       and blob = Carton.Uid.unsafe_of_string blob in
-      Some { Format.mail; blob; length; tokens }
+      Some { mail; blob; length; tokens }
 
 let sha1 =
   let module Hash = Digestif.SHA1 in
@@ -101,7 +108,7 @@ let run _quiet archive filepath pagesize =
   let documents, _leftover = Flux.Stream.run ~from ~via ~into in
   let _N = Float.of_int (List.length documents) in
   let df = Art.make () in
-  let fn { Format.tokens; _ } =
+  let fn { tokens; _ } =
     let fn (token, _) =
       let token = Art.key token in
       match Art.find_opt df token with
@@ -117,7 +124,7 @@ let run _quiet archive filepath pagesize =
   in
   let idf = Art.map ~f:fn df in
   let trie = Trie.create () in
-  let fn { Format.mail; tokens; length; _ } =
+  let fn { mail; tokens; length; _ } =
     let fn (token, count) =
       let entry = (mail, Float.of_int count, length) in
       let value =
