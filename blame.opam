@@ -46,4 +46,7 @@ pin-depends: [
   [ "mrmime.dev"          "git+https://github.com/mirage/mrmime.git#ffce7951d3df81d5555c0686489535e21e6443da" ]
   [ "dkim.dev"            "git+https://github.com/mirage/ocaml-dkim.git#e9c8d76e6cf3bd75c0d133694c082c433e8ae342" ]
   [ "art.dev"             "git+https://github.com/dinosaure/art.git#b7cfe72ae4e85cd26f86787310d5eb877f83c896" ]
+  [ "bancos.dev"          "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
+  [ "rowex.dev"           "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
+  [ "mpart.dev"           "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
 ]
