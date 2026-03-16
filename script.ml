@@ -14,57 +14,51 @@ let status_dot =
 let status_text =
   Document.find_el_by_id G.document (Jstr.v "statusText") |> Option.get
 
-type meta = { title : string; from : string }
+module Meta = struct
+  type t = Format.t
 
-let metadata : (string, meta) Hashtbl.t = Hashtbl.create 0x100
+  let weight _ = 1
+end
 
-let score_entry =
-  let open Jsont in
-  let uid = Object.mem "uid" ~enc:fst string in
-  let score = Object.mem "score" ~enc:snd number in
-  let fn uid score = (uid, score) in
-  Object.map fn |> uid |> score |> Object.finish
+module Cache = Lru.M.Make (String) (Meta)
 
-let truncate_uid uid =
-  if String.length uid > 16 then String.sub uid 0 16 ^ "..." else uid
+let cache = Cache.create 4096
 
-let render_results scores =
+let set_status_ready () =
+  El.set_at (jstrf "class") (Some (jstrf "dot ready")) status_dot;
+  El.set_children status_text [ El.txt' "ready" ]
+
+let set_status_loading () =
+  El.set_at (jstrf "class") (Some (jstrf "dot loading")) status_dot;
+  El.set_children status_text [ El.txt' "loading..." ]
+
+let set_status_error msg =
+  El.set_at (jstrf "class") (Some (jstrf "dot")) status_dot;
+  El.set_children status_text [ El.txt' (Fmt.str "error: %s" msg) ]
+
+let render scores =
   El.set_children results_div [];
-  let scores = List.sort (fun (_, a) (_, b) -> Float.compare b a) scores in
+  let scores =
+    List.sort (fun (_, a, _) (_, b, _) -> Float.compare b a) scores
+  in
   match scores with
   | [] -> El.set_children results_div [ El.p [ El.txt' "no results." ] ]
   | _ ->
-      let fn (uid, _score) =
-        match Hashtbl.find_opt metadata uid with
-        | Some m ->
-            let div =
+      let fn (uid, _score, m) =
+        let from = Format.emile_to_utf_8_string m.Format.from in
+        let div =
+          El.div
+            ~at:At.[ class' (jstrf "result") ]
+            [
+              El.a
+                ~at:At.[ href (jstrf "/email/%s" uid) ]
+                [ El.txt' m.Format.title ];
               El.div
-                ~at:At.[ class' (jstrf "result") ]
-                [
-                  El.a
-                    ~at:At.[ href (jstrf "/email/%s" uid) ]
-                    [ El.txt' m.title ];
-                  El.div
-                    ~at:At.[ class' (jstrf "result-meta") ]
-                    [ El.span [ El.txt' m.from ] ];
-                ]
-            in
-            El.append_children results_div [ div ]
-        | None ->
-            let div =
-              El.div
-                ~at:At.[ class' (jstrf "result") ]
-                [
-                  El.div
-                    ~at:At.[ class' (jstrf "result-uid") ]
-                    [
-                      El.a
-                        ~at:At.[ href (jstrf "/email/%s" uid) ]
-                        [ El.txt' (truncate_uid uid) ];
-                    ];
-                ]
-            in
-            El.append_children results_div [ div ]
+                ~at:At.[ class' (jstrf "result-meta") ]
+                [ El.span [ El.txt' from ] ];
+            ]
+        in
+        El.append_children results_div [ div ]
       in
       List.iter fn scores
 
@@ -85,8 +79,40 @@ let abort_previous () =
       current_abort := None
   | None -> ()
 
+let fetch_metadata signal uids_and_scores =
+  let tbl = Hashtbl.create 0x7ff in
+  let fn (uid, score) = Hashtbl.add tbl uid score in
+  Seq.iter fn uids_and_scores;
+  let uids = Seq.map (fun (uid, _) -> uid) uids_and_scores in
+  let json = Jsont_brr.encode (Format.seq Jsont.string) uids in
+  let json = Result.get_ok json in
+  let body = Brr_io.Fetch.Body.of_jstr json in
+  let method' = jstrf "POST" in
+  let headers =
+    Brr_io.Fetch.Headers.of_assoc
+      [ (jstrf "Content-Type", jstrf "application/json") ]
+  in
+  let init = Brr_io.Fetch.Request.init ~body ~headers ~method' ~signal () in
+  let req = Brr_io.Fetch.Request.v ~init (jstrf "/metadata") in
+  let open Fut.Result_syntax in
+  let* resp = Brr_io.Fetch.request req in
+  let body = Brr_io.Fetch.Response.as_body resp in
+  let* json = Brr_io.Fetch.Body.json body in
+  let fmt = Format.entries ~uid:Jsont.string in
+  let* entries = Jsont_brr.decode_jv fmt json |> Fut.return in
+  let fn (uid, m) =
+    match Hashtbl.find tbl uid with
+    | exception Not_found -> None
+    | score ->
+        Cache.add uid m cache;
+        Some (uid, score, m)
+  in
+  let entries = Seq.filter_map fn entries in
+  Fut.return (Ok entries)
+
 let do_search query =
   abort_previous ();
+  set_status_loading ();
   let ctrl = Abort.controller () in
   current_abort := Some ctrl;
   let signal = Abort.signal ctrl in
@@ -109,24 +135,36 @@ let do_search query =
     let* resp = Brr_io.Fetch.request req in
     let body = Brr_io.Fetch.Response.as_body resp in
     let* json = Brr_io.Fetch.Body.json body in
-    let* scores =
-      Jsont_brr.decode_jv (Jsont.list score_entry) json |> Fut.return
+    let fmt = Format.scores ~uid:Jsont.string in
+    let* scores = Jsont_brr.decode_jv fmt json |> Fut.return in
+    let fn (uid, score) =
+      match Cache.find uid cache with
+      | Some m -> Either.Left (uid, score, m)
+      | None -> Either.Right (uid, score)
     in
-    render_results scores;
+    let r0, to_fetch = Seq.partition_map fn scores in
+    let* r1 =
+      if Seq.is_empty to_fetch then Fut.return (Ok Seq.empty)
+      else fetch_metadata signal to_fetch
+    in
+    let results = Seq.append r0 r1 in
+    render (List.of_seq results);
     Fut.return (Ok ())
   in
   Fut.await (run ()) @@ function
-  | Ok () -> ()
+  | Ok () -> set_status_ready ()
   | Error err ->
       let name = Jv.Error.name err in
-      if not (Jstr.equal name (Jstr.v "AbortError")) then
+      if not (Jstr.equal name (Jstr.v "AbortError")) then begin
         let msg = Jv.Error.message err |> Jstr.to_string in
+        set_status_error msg;
         El.set_children results_div
           [
             El.p
               ~at:At.[ class' (jstrf "error-msg") ]
               [ El.txt' (Fmt.str "error: %s" msg) ];
           ]
+      end
 
 let on_input _ev =
   let query =
@@ -142,38 +180,6 @@ let on_input _ev =
     let t = Jv.call Jv.global "setTimeout" [| cb; Jv.of_int 300 |] in
     debounce_timer := Some t
 
-let set_status_ready () =
-  El.set_at (jstrf "class") (Some (jstrf "dot ready")) status_dot;
-  El.set_children status_text [ El.txt' "ready" ]
-
-let set_status_error msg =
-  El.set_at (jstrf "class") (Some (jstrf "dot")) status_dot;
-  El.set_children status_text [ El.txt' (Fmt.str "error: %s" msg) ]
-
-let load_metadata () =
-  let open Fut.Result_syntax in
-  let req = Brr_io.Fetch.Request.v (jstrf "/list") in
-  let* resp = Brr_io.Fetch.request req in
-  let body = Brr_io.Fetch.Response.as_body resp in
-  let* emails = Brr_io.Fetch.Body.json body in
-  let* emails =
-    let uid = Jsont.string in
-    let lang = Jsont.string in
-    Jsont_brr.decode_jv (Jsont.list (Format.email ~uid ~lang)) emails
-    |> Fut.return
-  in
-  let fn (e : (string, string) Format.t) =
-    let from = Format.emile_to_utf_8_string e.from in
-    Hashtbl.replace metadata e.uid { title = e.title; from }
-  in
-  List.iter fn emails;
-  Fut.return (Ok ())
-
 let () =
   let _ = Ev.listen Ev.input on_input (El.as_target search_bar) in
-  Fut.await (load_metadata ()) @@ fun result ->
-  match result with
-  | Ok () -> set_status_ready ()
-  | Error err ->
-      let msg = Jv.Error.message err |> Jstr.to_string in
-      set_status_error msg
+  set_status_ready ()

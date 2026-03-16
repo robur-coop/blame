@@ -44,13 +44,6 @@ let identify =
   let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
   { Carton.First_pass.init; feed; serialize }
 
-let semantic_to_docs =
-  let fn acc (mime, lang, contents) =
-    let contents = Carton.Uid.unsafe_of_string contents in
-    { Format.mime; lang; contents } :: acc
-  in
-  Email.Semantic.fold fn []
-
 let headers =
   let rec consume decoder fields = function
     | `Await -> (`Continue decoder, fields)
@@ -97,20 +90,6 @@ let bstr_to_string =
     Flux.Sink { init; push; full; stop }
   in
   { Flux.flow }
-
-let record_and_filter index (value, cursor, uid) =
-  Hashtbl.add index uid cursor;
-  let ( let* ) = Option.bind in
-  match Carton.Value.kind value with
-  | `B | `D -> None
-  | `C -> Some (Either.Left uid)
-  | `A ->
-      let str = Carton.Value.string value in
-      let m = Email.of_string str in
-      let* { Email.Skeleton.headers; _ }, s = Result.to_option m in
-      let docs = semantic_to_docs s in
-      if docs = [] then None
-      else Some (Either.Right (uid, Carton.Uid.unsafe_of_string headers, docs))
 
 let crlf = Bstr.of_string "\r\n"
 
@@ -174,13 +153,9 @@ type t = {
   mails : mail list;
 }
 
-and mail = {
-  uid : Carton.Uid.t;
-  hdrs : Carton.Uid.t;
-  docs : (Carton.Uid.t, Snowball.Language.t) Format.doc list;
-}
+and mail = { uid : Carton.Uid.t; hdrs : Carton.Uid.t }
 
-let to_entry pack { uid; hdrs; docs } =
+let to_entry pack { uid; hdrs } =
   let ( let* ) = Option.bind in
   let size = Carton.size_of_uid pack ~uid:hdrs Carton.Size.zero in
   let blob = Carton.Blob.make ~size in
@@ -221,7 +196,16 @@ let to_entry pack { uid; hdrs; docs } =
     in
     List.find_map fn hdrs
   in
-  Some { Format.title; from; date; uid; docs }
+  Some (uid, { Format.title; from; date })
+
+let hashtbl =
+  let init () = Hashtbl.create 0x7ff
+  and push tbl (k, v) =
+    Hashtbl.replace tbl k v;
+    tbl
+  and full = Fun.const false
+  and stop = Fun.id in
+  Flux.Sink { init; push; full; stop }
 
 let emails ?cachesize name =
   let map blk ~pos len =
@@ -265,13 +249,10 @@ let emails ?cachesize name =
             let m = Email.of_string str in
             begin match Result.to_option m with
             | None -> t
-            | Some ({ Email.Skeleton.headers; _ }, s) ->
+            | Some ({ Email.Skeleton.headers; _ }, _) ->
                 let hdrs = Carton.Uid.unsafe_of_string headers in
-                let docs = semantic_to_docs s in
-                if docs = [] then t
-                else
-                  let mail = { uid; hdrs; docs } in
-                  { t with mails = mail :: t.mails }
+                let mail = { uid; hdrs } in
+                { t with mails = mail :: t.mails }
             end
         | `B | `D -> t
         | `C ->
@@ -302,7 +283,7 @@ let emails ?cachesize name =
     in
     let from = Flux.Source.list t.mails in
     let via = Flux.Flow.filter_map (to_entry pack) in
-    let into = Flux.Sink.list in
+    let into = hashtbl in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
     (pool, avgdl, entries, oracle.hash)
   in

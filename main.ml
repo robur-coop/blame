@@ -34,26 +34,6 @@ let jlang =
   let dec = language_of_string in
   map ~enc ~dec string
 
-let list (hash, entries) req _server _pool =
-  let open Vifu.Response.Syntax in
-  let hdrs = Vifu.Request.headers req in
-  let if_none_match =
-    match Vifu.Headers.get hdrs "if-none-match" with
-    | Some hash' -> String.equal hash' hash
-    | None -> false
-  in
-  if if_none_match then
-    let* () = Vifu.Response.empty in
-    Vifu.Response.respond `Not_modified
-  else
-    let* () = Vifu.Response.add ~field:"Etag" hash in
-    let* () =
-      Vifu.Response.with_json ~compression:`DEFLATE req
-        (Jsont.list (Format.email ~uid:juid ~lang:jlang))
-        entries
-    in
-    Vifu.Response.respond `OK
-
 let show req uid _server pool =
   let open Vifu.Response.Syntax in
   Cattery.use pool @@ fun (pack, blob) ->
@@ -183,7 +163,6 @@ let query bm25 req _server _pool =
   let open Vifu.Response.Syntax in
   match Vifu.Request.of_json req with
   | Ok { Format.lang; query } ->
-      Logs.debug (fun m -> m "Start to search: %S" query);
       let actions = Tokenizer.[ (Whitespace, Remove); (Bert, Remove) ] in
       let tokens = Tokenizer.run ~encoding:UTF_8 actions (Seq.return query) in
       let stemmer = Snowball.create ~encoding:UTF_8 lang in
@@ -195,10 +174,32 @@ let query bm25 req _server _pool =
       let q = Flux.Bqueue.(create with_close 0x7ff) in
       let prm = Miou.async @@ fun () -> score bm25 query q in
       let seq = Flux.Bqueue.to_seq q in
-      let* () = Vifu.Response.with_json req (Format.scores ~uid:juid) seq in
+      let* () =
+        Vifu.Response.with_json ~compression:`DEFLATE req
+          (Format.scores ~uid:juid) seq
+      in
       let* () = Vifu.Response.respond `OK in
       Miou.await_exn prm;
       Vifu.Response.return ()
+  | Error _ ->
+      let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
+      Vifu.Response.respond `Bad_request
+
+let metadata entries req _server _pool =
+  let open Vifu.Response.Syntax in
+  match Vifu.Request.of_json req with
+  | Ok uids ->
+      let fn uid =
+        match Hashtbl.find_opt entries uid with
+        | Some m -> Some (uid, m)
+        | None -> None
+      in
+      let lst = Seq.filter_map fn uids in
+      let* () =
+        Vifu.Response.with_json ~compression:`DEFLATE req
+          (Format.entries ~uid:juid) lst
+      in
+      Vifu.Response.respond `OK
   | Error _ ->
       let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
       Vifu.Response.respond `Bad_request
@@ -227,7 +228,7 @@ let devices ?gateway cidr =
 
 let run _ cidr gateway port =
   Mkernel.run (devices ?gateway cidr)
-  @@ fun rng (daemon, tcp, _) (pool, avgdl, entries, hash) trie () ->
+  @@ fun rng (daemon, tcp, _) (pool, avgdl, entries, _hash) trie () ->
   let bm25 = { trie; avgdl } in
   let@ () =
    fun () ->
@@ -236,13 +237,7 @@ let run _ cidr gateway port =
   in
   let cfg = Vifu.Config.v port in
   let jquery = Format.query ~lang:jlang in
-  let hash_of_entries =
-    let open Digestif.SHA1 in
-    let ctx = empty in
-    let ctx = feed_string ctx hash in
-    let ctx = feed_string ctx ".entries" in
-    to_hex (get ctx)
-  in
+  let juids = Format.seq juid in
   let routes =
     let open Vifu.Route in
     let open Vifu.Uri in
@@ -252,10 +247,10 @@ let run _ cidr gateway port =
       get (rel / "get" /% uid /?? any) --> show;
       get (rel / "script.js" /?? any) --> script;
       get (rel / "style.css" /?? any) --> style;
-      get (rel / "list" /?? any) --> list (hash_of_entries, entries);
       get (rel / "get" /% uid /?? any) --> show;
       get (rel / "email" /% uid /?? any) --> fancy;
       post (json_encoding jquery) (rel / "query" /?? any) --> query bm25;
+      post (json_encoding juids) (rel / "metadata" /?? any) --> metadata entries;
       get (rel /?? any) --> index;
     ]
   in

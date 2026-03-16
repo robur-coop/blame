@@ -22,7 +22,7 @@
  (name script)
  (modules script)
  (modes js)
- (libraries jsont.brr brr blame.format))
+ (libraries jsont.brr brr lru blame.format))
 
 (rule
  (targets script.js)
