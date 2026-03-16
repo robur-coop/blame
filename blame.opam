@@ -49,4 +49,5 @@ pin-depends: [
   [ "bancos.dev"          "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
   [ "rowex.dev"           "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
   [ "mpart.dev"           "git+https://github.com/robur-coop/bancos.git#1a17bcf88bde2ef8352d7f35162ab1f0d2849462" ]
+  [ "zarith.dev" "git+https://github.com/mirage/Zarith.git#df8969d9bb95cffca13e31a615189ab27ada0684" ]
 ]

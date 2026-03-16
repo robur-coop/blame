@@ -25,3 +25,4 @@
 [ ! -d "vendors/prettym" ] && opam source prettym --dir vendors/prettym
 [ ! -d "vendors/utcp" ] && opam source utcp --dir vendors/utcp
 [ ! -d "vendors/bancos" ] && opam source bancos --dir vendors/bancos
+[ ! -d "vendors/zarith" ] && opam source zarith --dir vendors/zarith
