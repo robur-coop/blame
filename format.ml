@@ -1,41 +1,11 @@
-type ('uid, 'lang) t = {
-  title : string;
-  uid : 'uid;
-  date : Ptime.t;
-  from : Emile.mailbox;
-  docs : ('uid, 'lang) doc list;
-}
-
-and ('uid, 'lang) doc = { mime : string; lang : 'lang; contents : 'uid }
+type t = { title : string; date : Ptime.t; from : Emile.mailbox }
 
 let emile_to_utf_8_string = function
   | { Emile.name = None; local; domain }
   | { Emile.name = Some _; local; domain } ->
       Emile.address_to_string (local, domain)
 
-(*
-      let buf = Buffer.create 0x7ff in
-      let fn = function
-        | `Dot -> Buffer.add_string buf ". "
-        | `Word (`Atom str) ->
-            Buffer.add_string buf str;
-            Buffer.add_char buf ' '
-        | `Word (`String str) ->
-            Buffer.add_char buf '"';
-            Buffer.add_string buf str;
-            Buffer.add_string buf "\" "
-        | `Encoded (charset, Emile.(Quoted_printable (Ok str) | Base64 (Ok str))) ->
-            let str' = Rosetta.to_utf_8_string ~charset str in
-            let str' = Option.value ~default:str str' in
-            Buffer.add_string buf str';
-            Buffer.add_char buf ' '
-        | `Encoded _ -> () in
-      List.iter fn phrase;
-      let name = Buffer.contents buf in
-      Fmt.str "%s<%s>" name (Emile.address_to_string (local, domain))
-  *)
-
-let email ~uid ~lang =
+let email =
   let open Jsont in
   let title = Object.mem "title" ~enc:(fun t -> t.title) string in
   let date =
@@ -56,40 +26,8 @@ let email ~uid ~lang =
     map ~dec ~enc:emile_to_utf_8_string string
   in
   let from = Object.mem "from" ~enc:(fun t -> t.from) mailbox in
-  let doc =
-    let mime = Object.mem "mime" ~enc:(fun t -> t.mime) string in
-    let lang = Object.mem "lang" ~enc:(fun t -> t.lang) lang in
-    let contents = Object.mem "contents" ~enc:(fun t -> t.contents) uid in
-    let fn mime lang contents = { mime; lang; contents } in
-    Object.map fn |> mime |> lang |> contents |> Object.finish
-  in
-  let uid = Object.mem "uid" ~enc:(fun t -> t.uid) uid in
-  let docs = Object.mem "docs" ~enc:(fun t -> t.docs) (list doc) in
-  let fn title uid date from docs = { title; uid; date; from; docs } in
-  Object.map fn |> title |> uid |> date |> from |> docs |> Object.finish
-
-type 'uid document = {
-  length : int;
-  mail : 'uid;
-  blob : 'uid;
-  tokens : (string * int) list;
-}
-
-let token =
-  let open Jsont in
-  let stem = Object.mem "stem" ~enc:(fun (a, _) -> a) string in
-  let count = Object.mem "count" ~enc:(fun (_, b) -> b) int in
-  let fn stem count = (stem, count) in
-  Object.map fn |> stem |> count |> Object.finish
-
-let stem ~uid =
-  let open Jsont in
-  let length = Object.mem "length" ~enc:(fun t -> t.length) int in
-  let mail = Object.mem "mail" ~enc:(fun t -> t.mail) uid in
-  let blob = Object.mem "blob" ~enc:(fun t -> t.blob) uid in
-  let tokens = Object.mem "tokens" ~enc:(fun t -> t.tokens) (list token) in
-  let fn length mail blob tokens = { length; mail; blob; tokens } in
-  Object.map fn |> length |> mail |> blob |> tokens |> Object.finish
+  let fn title date from = { title; date; from } in
+  Object.map fn |> title |> date |> from |> Object.finish
 
 type 'lang query = { lang : 'lang; query : string }
 
@@ -100,4 +38,39 @@ let query ~lang =
   let fn lang query = { lang; query } in
   Object.map fn |> lang |> query |> Object.finish
 
-let response = Jsont.(list string)
+let iter fn acc seq =
+  let rec go acc idx seq =
+    match Seq.uncons seq with
+    | Some (elt, seq) ->
+        let acc = fn acc idx elt in
+        go acc (succ idx) seq
+    | None -> acc
+  in
+  go acc 0 seq
+
+let seq (elt : 'elt) =
+  let enc = { Jsont.Array.enc = iter }
+  and dec_empty = Seq.empty
+  and dec_add _idx elt node = Seq.Cons (elt, fun () -> node)
+  and dec_finish _meta _idx node = fun () -> node in
+  Jsont.Array.map ~enc ~dec_empty ~dec_add ~dec_finish elt |> Jsont.Array.array
+
+let scores ~uid =
+  let entry =
+    let open Jsont in
+    let mail = Object.mem "uid" ~enc:fst uid in
+    let score = Object.mem "score" ~enc:snd number in
+    let fn mail score = (mail, score) in
+    Object.map fn |> mail |> score |> Object.finish
+  in
+  seq entry
+
+let entries ~uid =
+  let entry =
+    let open Jsont in
+    let mail = Object.mem "uid" ~enc:fst uid in
+    let metadata = Object.mem "metadata" ~enc:snd email in
+    let fn mail metadata = (mail, metadata) in
+    Object.map fn |> mail |> metadata |> Object.finish
+  in
+  seq entry

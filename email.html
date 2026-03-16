@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>blame - email</title>
+    <link rel="stylesheet" href="/style.css" />
+    <style>
+      .email-container {
+        width: 100%;
+        max-width: 720px;
+        padding: 0 16px 32px;
+      }
+      .email-nav {
+        padding: 8px 0;
+        font-size: 11px;
+      }
+      .email-nav a {
+        color: var(--text-muted);
+        text-decoration: none;
+      }
+      .email-nav a:hover {
+        color: var(--accent);
+      }
+      .email-headers {
+        border: 1px solid var(--border);
+        padding: 12px;
+        margin: 8px 0 0;
+        font-size: 12px;
+      }
+      .email-header-row {
+        display: flex;
+        gap: 8px;
+        padding: 2px 0;
+      }
+      .email-header-label {
+        color: var(--accent-dim);
+        min-width: 64px;
+        flex-shrink: 0;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 1px;
+        padding-top: 1px;
+      }
+      .email-header-value {
+        color: var(--text-primary);
+        word-break: break-word;
+      }
+      .email-body {
+        border: 1px solid var(--border);
+        border-top: none;
+        padding: 16px 12px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--text-primary);
+        background: var(--bg-secondary);
+        overflow-x: auto;
+      }
+      .email-loading {
+        padding: 16px 0;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>blame</h1>
+      <div class="subtitle">email search engine</div>
+    </header>
+    <div class="email-container">
+      <div class="email-nav">
+        <a href="/">&lt;- back to search</a>
+      </div>
+      <div id="emailContent">
+        <div class="email-loading">loading email...</div>
+      </div>
+    </div>
+    <script>
+      (function() {
+        var path = window.location.pathname;
+        var uid = path.replace('/email/', '');
+        var container = document.getElementById('emailContent');
+
+        function escapeHtml(str) {
+          var div = document.createElement('div');
+          div.appendChild(document.createTextNode(str));
+          return div.innerHTML;
+        }
+
+        function parseHeaders(raw) {
+          var headers = {};
+          var lines = raw.split('\n');
+          var current = '';
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line === '' || line === '\r') break;
+            if (line[0] === ' ' || line[0] === '\t') {
+              current += ' ' + line.trim();
+            } else {
+              if (current) {
+                var sep = current.indexOf(':');
+                if (sep > 0) {
+                  var key = current.substring(0, sep).toLowerCase();
+                  var val = current.substring(sep + 1).trim();
+                  headers[key] = val;
+                }
+              }
+              current = line;
+            }
+          }
+          if (current) {
+            var sep = current.indexOf(':');
+            if (sep > 0) {
+              var key = current.substring(0, sep).toLowerCase();
+              var val = current.substring(sep + 1).trim();
+              headers[key] = val;
+            }
+          }
+          return headers;
+        }
+
+        fetch('/get/' + uid)
+          .then(function(resp) {
+            if (!resp.ok) throw new Error('not found');
+            return resp.text();
+          })
+          .then(function(text) {
+            var sep = text.indexOf('\n\n');
+            if (sep < 0) sep = text.indexOf('\r\n\r\n');
+            var headerPart = sep > 0 ? text.substring(0, sep) : '';
+            var bodyPart = sep > 0 ? text.substring(sep).trim() : text;
+            var hdrs = parseHeaders(headerPart);
+
+            var html = '<div class="email-headers">';
+            var fields = [
+              ['from', hdrs['from'] || ''],
+              ['to', hdrs['to'] || ''],
+              ['date', hdrs['date'] || ''],
+              ['subject', hdrs['subject'] || '']
+            ];
+            for (var i = 0; i < fields.length; i++) {
+              if (fields[i][1]) {
+                html += '<div class="email-header-row">';
+                html += '<span class="email-header-label">' + escapeHtml(fields[i][0]) + '</span>';
+                html += '<span class="email-header-value">' + escapeHtml(fields[i][1]) + '</span>';
+                html += '</div>';
+              }
+            }
+            html += '</div>';
+            html += '<div class="email-body">' + escapeHtml(bodyPart) + '</div>';
+            container.innerHTML = html;
+            if (hdrs['subject']) {
+              document.title = 'blame - ' + hdrs['subject'];
+            }
+          })
+          .catch(function(err) {
+            container.innerHTML = '<div class="email-loading" style="color:var(--error)">error: ' + escapeHtml(err.message) + '</div>';
+          });
+      })();
+    </script>
+  </body>
+</html>

@@ -1,133 +1,201 @@
-body {
+/* The design comes from https://thicket.dev/ (Anil Madhavapeddy). */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+
+:root {
+  --bg-primary: #000;
+  --bg-secondary: #111;
+  --bg-tertiary: #1a1a1a;
+  --bg-hover: #222;
+  --border: #333;
+  --text-primary: #ddd;
+  --text-secondary: #888;
+  --text-muted: #555;
+  --accent: #00ff88;
+  --accent-dim: #00cc6a;
+  --accent-bg: rgba(0, 255, 136, 0.05);
+  --link: #00ffff;
+  --link-hover: #88ffff;
+  --error: #ff4444;
+}
+
+* {
   margin: 0;
   padding: 0;
-  font-family: Arial, sans-serif;
-  background: #f4f6f9;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Roboto Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
-h1 {
-  margin-top: 40px;
-  color: #333;
+header {
+  width: 100%;
+  max-width: 720px;
+  padding: 32px 16px 0;
 }
 
-.hidden {
-  display: none !important;
+header h1 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+header .subtitle {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 4px;
+  letter-spacing: 1px;
 }
 
 .search-box {
-  margin-top: 20px;
-  width: 90%;
-  max-width: 500px;
+  width: 100%;
+  max-width: 720px;
+  padding: 16px 16px 0;
 }
 
 .search-box input {
   width: 100%;
-  padding: 12px 15px;
-  font-size: 16px;
-  border-radius: 8px;
-  border: 1px solid #ccc;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   outline: none;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-  transition: 0.2s;
+  transition: border-color 0.15s;
+}
+
+.search-box input::placeholder {
+  color: var(--text-muted);
 }
 
 .search-box input:focus {
-  border-color: #007bff;
-  box-shadow: 0 2px 10px rgba(0, 123, 255, 0.3);
+  border-color: var(--accent-dim);
 }
 
-.none {
-  border-color: #f44336;
+.status-bar {
+  width: 100%;
+  max-width: 720px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
-.topics {
-  margin-top: 30px;
-  width: 90%;
-  max-width: 600px;
+.status-bar .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
 }
 
-.topic {
-  background: white;
-  padding: 15px 20px;
-  margin-bottom: 12px;
-  border-radius: 8px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-  cursor: pointer;
-  transition: 0.2s;
+.status-bar .dot.ready {
+  background: var(--accent);
 }
 
-.topic:hover {
-  transform: translateX(5px);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+.status-bar .dot.loading {
+  background: #ffaa00;
+  animation: pulse 1.2s ease-in-out infinite;
 }
 
-.details-wrapper {
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.results {
+  width: 100%;
+  max-width: 720px;
+  padding: 0 16px 32px;
+}
+
+.results p {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.result {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+  transition: background 0.15s;
+}
+
+.result:first-child {
+  border-top: 1px solid var(--border);
+}
+
+.result:hover {
+  background: var(--accent-bg);
+}
+
+.result a {
+  text-decoration: none;
+  color: var(--link);
+  font-size: 13px;
+  font-weight: 400;
+  display: block;
   overflow: hidden;
-  max-height: 0;
-  transition:
-    max-height 0.35s ease,
-    opacity 0.3s ease;
-  opacity: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.topic:hover .details-wrapper {
-  max-height: 150px;
-  opacity: 1;
+.result a:hover {
+  color: var(--link-hover);
 }
 
-.details {
-  padding: 10px 5px 0 5px;
-  color: #555;
-  font-size: 14px;
+.result-meta {
+  display: flex;
+  gap: 16px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
-.crt {
-  margin-top: 50px;
-  width: min(220px, 92vw);
-  min-height: 200px;
-  border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
-  transform: perspective(1200px) rotateX(1deg) rotateY(0.5deg);
-  padding: 10px;
+.result-uid {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.crt::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.05),
-    rgba(0, 0, 0, 0.05) 2px,
-    transparent 3px,
-    transparent 4px
-  );
-  mix-blend-mode: multiply;
+.result-uid a {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
-.crt::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      180% 120% at 50% -10%,
-      rgba(0, 0, 0, 0.02),
-      transparent 40%
-    ),
-    radial-gradient(80% 60% at 50% 120%, rgba(0, 0, 0, 0.08), transparent 60%);
-  opacity: 0.7;
+.result-uid a:hover {
+  color: var(--link);
 }
 
-.boot pre {
-  margin: 0;
-  font-size: 8px;
-  line-height: 1.45;
-  overflow-y: auto;
-  opacity: 0.9;
+.separator {
+  width: 100%;
+  max-width: 720px;
+  padding: 0 16px;
+  margin: 8px 0;
+}
+
+.separator hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.error-msg {
+  color: var(--error);
+  font-size: 12px;
+  padding: 8px 0;
 }

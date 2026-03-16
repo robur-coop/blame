@@ -44,13 +44,6 @@ let identify =
   let serialize = SHA1.(Carton.Uid.unsafe_of_string $ to_raw_string $ get) in
   { Carton.First_pass.init; feed; serialize }
 
-let semantic_to_docs =
-  let fn acc (mime, lang, contents) =
-    let contents = Carton.Uid.unsafe_of_string contents in
-    { Format.mime; lang; contents } :: acc
-  in
-  Email.Semantic.fold fn []
-
 let headers =
   let rec consume decoder fields = function
     | `Await -> (`Continue decoder, fields)
@@ -97,20 +90,6 @@ let bstr_to_string =
     Flux.Sink { init; push; full; stop }
   in
   { Flux.flow }
-
-let record_and_filter index (value, cursor, uid) =
-  Hashtbl.add index uid cursor;
-  let ( let* ) = Option.bind in
-  match Carton.Value.kind value with
-  | `B | `D -> None
-  | `C -> Some (Either.Left uid)
-  | `A ->
-      let str = Carton.Value.string value in
-      let m = Email.of_string str in
-      let* { Email.Skeleton.headers; _ }, s = Result.to_option m in
-      let docs = semantic_to_docs s in
-      if docs = [] then None
-      else Some (Either.Right (uid, Carton.Uid.unsafe_of_string headers, docs))
 
 let crlf = Bstr.of_string "\r\n"
 
@@ -167,7 +146,16 @@ let unstrctrd_with_encoded_words_to_string v =
 
 let hdopt = function x :: _ -> Some x | [] -> None
 
-let to_entry pack (uid, hdrs, docs) =
+type t = {
+  biggest_object : int;
+  total_length : int;
+  stems : int;
+  mails : mail list;
+}
+
+and mail = { uid : Carton.Uid.t; hdrs : Carton.Uid.t }
+
+let to_entry pack { uid; hdrs } =
   let ( let* ) = Option.bind in
   let size = Carton.size_of_uid pack ~uid:hdrs Carton.Size.zero in
   let blob = Carton.Blob.make ~size in
@@ -208,7 +196,16 @@ let to_entry pack (uid, hdrs, docs) =
     in
     List.find_map fn hdrs
   in
-  Some { Format.title; from; date; uid; docs }
+  Some (uid, { Format.title; from; date })
+
+let hashtbl =
+  let init () = Hashtbl.create 0x7ff
+  and push tbl (k, v) =
+    Hashtbl.replace tbl k v;
+    tbl
+  and full = Fun.const false
+  and stop = Fun.id in
+  Flux.Sink { init; push; full; stop }
 
 let emails ?cachesize name =
   let map blk ~pos len =
@@ -234,22 +231,61 @@ let emails ?cachesize name =
     in
     let index = Hashtbl.create 0x7ff in
     let from = Carton_miou_flux.entries ~threads:0 pack oracle in
-    let via = Flux.Flow.filter_map (record_and_filter index) in
-    let into = Flux.Sink.list in
-    let documents_and_emails, _leftover = Flux.Stream.run ~from ~via ~into in
-    let documents, emails = List.partition_map Fun.id documents_and_emails in
-    Log.info (fun m ->
-        m "%d document(s) and %d email(s)" (List.length documents)
-          (List.length emails));
-    let pack =
-      let index uid = Carton.Local (Hashtbl.find index uid) in
-      Carton.with_index pack index
+    let into =
+      let init () =
+        let biggest_object = 0
+        and total_length = 0
+        and stems = 0
+        and mails = [] in
+        { biggest_object; total_length; stems; mails }
+      and push t (value, offset, uid) =
+        Hashtbl.add index uid offset;
+        let length = Carton.Value.length value in
+        let biggest_object = Int.max length t.biggest_object in
+        let t = { t with biggest_object } in
+        match Carton.Value.kind value with
+        | `A ->
+            let str = Carton.Value.string value in
+            let m = Email.of_string str in
+            begin match Result.to_option m with
+            | None -> t
+            | Some ({ Email.Skeleton.headers; _ }, _) ->
+                let hdrs = Carton.Uid.unsafe_of_string headers in
+                let mail = { uid; hdrs } in
+                { t with mails = mail :: t.mails }
+            end
+        | `B | `D -> t
+        | `C ->
+            let str = Carton.Value.string value in
+            let _, _, length, _ = Result.get_ok (Stem.of_string str) in
+            let stems = t.stems + 1
+            and total_length = t.total_length + length in
+            { t with stems; total_length }
+      and full _ = false
+      and stop = Fun.id in
+      Flux.Sink { init; push; full; stop }
     in
-    let from = Flux.Source.list emails in
+    let via = Flux.Flow.identity in
+    let t, _leftover = Flux.Stream.run ~from ~via ~into in
+    let avgdl =
+      let _N = Float.of_int t.stems in
+      let total_length = Float.of_int t.total_length in
+      total_length /. _N
+    in
+    let index uid = Carton.Local (Hashtbl.find index uid) in
+    let pack = Carton.with_index pack index in
+    let size = Carton.Size.of_int_exn t.biggest_object in
+    let pool =
+      Cattery.create 128 @@ fun () ->
+      let pack = Carton.copy pack in
+      let blob = Carton.Blob.make ~size in
+      (pack, blob)
+    in
+    let from = Flux.Source.list t.mails in
     let via = Flux.Flow.filter_map (to_entry pack) in
-    let into = Flux.Sink.list in
+    let into = hashtbl in
     let entries, _leftover = Flux.Stream.run ~from ~via ~into in
-    ((pack, oracle.Carton.hash), documents, entries)
+    (pool, avgdl, entries, oracle.hash)
   in
   let open Mkernel in
   map fn [ block name ]

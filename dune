@@ -1,21 +1,4 @@
 (executable
- (name crunch)
- (modules crunch)
- (enabled_if
-  (= %{context_name} "default"))
- (libraries
-  hxd.core
-  hxd.string
-  cmdliner
-  fmt
-  fmt.tty
-  fmt.cli
-  logs
-  logs.fmt
-  logs.cli
-  fpath))
-
-(executable
  (name main)
  (modules main documents)
  (public_name blame)
@@ -28,7 +11,9 @@
   stem.stopwords
   gmp
   mirage-crypto-rng-mkernel
-  vifu)
+  trie
+  vifu
+  cattery)
  (foreign_stubs
   (language c)
   (names manifest)))
@@ -37,7 +22,7 @@
  (name script)
  (modules script)
  (modes js)
- (libraries jsont.brr brr blame.format))
+ (libraries jsont.brr brr lru blame.format))
 
 (rule
  (targets script.js)
@@ -62,9 +47,11 @@
   hxd.string
   emile
   blaze.email
+  blaze.stem
   digestif
   mkernel
-  carton-miou.flux))
+  carton-miou.flux
+  cattery))
 
 (rule
  (targets manifest.c)
@@ -82,27 +69,20 @@
   (run solo5-elftool gen-manifest manifest.json manifest.c)))
 
 (rule
- (targets manifest.json)
- (enabled_if
-  (= %{context_name} "solo5"))
- (action
-  (with-stdout-to
-   manifest.json
-   (run %{exe:main.exe} --ipv4=0.0.0.0/24))))
-
-(rule
  (targets documents.ml)
- (deps index.html script.js style.css)
+ (deps index.html script.js style.css email.html)
  (action
   (with-stdout-to
    documents.ml
    (run
-    %{exe:crunch.exe}
+    mcrunch
     --file
-    index.html
+    index:index.html
     --file
-    script.js
+    script:script.js
     --file
-    style.css))))
+    style:style.css
+    --file
+    email:email.html))))
 
 (vendored_dirs vendors)

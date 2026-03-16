@@ -2,27 +2,29 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <title>Liste de Topics (avec chargement JSON)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>blame</title>
     <script type="text/javascript" defer src="/script.js"></script>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div id="crt" class="crt">
-      <div id="boot" class="boot">
-        <pre>&gt; Booting... </pre>
-      </div>
-    </div>
-
-    <h1 class="hidden" id="title">Emails</h1>
-
-    <div class="search-box hidden" id="searchBox">
+    <header>
+      <h1>blame</h1>
+      <div class="subtitle">Email search engine</div>
+    </header>
+    <div class="search-box">
       <input
         type="text"
         id="searchBar"
-        placeholder="🔍 Rechercher un topic..."
+        placeholder="> search emails..."
+        autocomplete="off"
+        spellcheck="false"
       />
     </div>
-
-    <div class="topics hidden" id="topicsList"></div>
+    <div id="statusBar" class="status-bar">
+      <span class="dot loading" id="statusDot"></span>
+      <span id="statusText">indexing archive...</span>
+    </div>
+    <div class="results" id="results"></div>
   </body>
 </html>

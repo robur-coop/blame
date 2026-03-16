@@ -1,5 +1,9 @@
+[@@@warning "-32"]
+[@@@warning "-26"]
+
 module RNG = Mirage_crypto_rng.Fortuna
 
+let () = Printexc.record_backtrace true
 let ( let@ ) finally fn = Fun.protect ~finally fn
 
 let uid =
@@ -30,96 +34,11 @@ let jlang =
   let dec = language_of_string in
   map ~enc ~dec string
 
-let list (entries, hash) req _server () =
+let show req uid _server pool =
   let open Vifu.Response.Syntax in
-  let hdrs = Vifu.Request.headers req in
-  let if_none_match =
-    match Vifu.Headers.get hdrs "if-none-match" with
-    | Some hash' -> String.equal hash' hash
-    | None -> false
-  in
-  if if_none_match then
-    let* () = Vifu.Response.empty in
-    Vifu.Response.respond `Not_modified
-  else
-    let* () = Vifu.Response.add ~field:"Etag" hash in
-    let* () =
-      Vifu.Response.with_json ~compression:`DEFLATE req
-        (Jsont.list (Format.email ~uid:juid ~lang:jlang))
-        entries
-    in
-    Vifu.Response.respond `OK
-
-let stems (documents, hash) req _server () =
-  let open Vifu.Response.Syntax in
-  let hdrs = Vifu.Request.headers req in
-  let if_none_match =
-    match Vifu.Headers.get hdrs "if-none-match" with
-    | Some hash' -> String.equal hash' hash
-    | None -> false
-  in
-  if if_none_match then
-    let* () = Vifu.Response.empty in
-    Vifu.Response.respond `Not_modified
-  else
-    let* () = Vifu.Response.add ~field:"Etag" hash in
-    let* () =
-      Vifu.Response.with_json ~compression:`DEFLATE req (Jsont.list juid)
-        documents
-    in
-    Vifu.Response.respond `OK
-
-let stem_of_uid pack uid =
-  let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
-  let blob = Carton.Blob.make ~size in
-  let value = Carton.of_uid pack blob ~uid in
-  match Carton.Value.kind value with
-  | `A | `B | `D -> Fmt.invalid_arg "Invalid stem object"
-  | `C ->
-      let str = Carton.Value.string value in
-      let stem = Stem.of_string str in
-      let mail, blob, length, tbl = Result.get_ok stem in
-      let tokens = List.of_seq (Hashtbl.to_seq tbl) in
-      let mail = Carton.Uid.unsafe_of_string mail
-      and blob = Carton.Uid.unsafe_of_string blob in
-      { Format.mail; blob; length; tokens }
-
-let pstem pack req _server () =
-  let open Vifu.Response.Syntax in
-  try
-    match Vifu.Request.of_json req with
-    | Ok uids ->
-        let pack = Carton.copy pack in
-        let ts = List.map (stem_of_uid pack) uids in
-        let* () =
-          Vifu.Response.with_json req (Jsont.list (Format.stem ~uid:juid)) ts
-        in
-        Vifu.Response.respond `OK
-    | Error _ ->
-        let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
-        Vifu.Response.respond `Bad_request
-  with exn ->
-    let str = Fmt.str "Got an exception: %s" (Printexc.to_string exn) in
-    let* () = Vifu.Response.with_text req str in
-    Vifu.Response.respond `Not_found
-
-let stem pack req uid _server () =
-  let open Vifu.Response.Syntax in
-  try
-    let pack = Carton.copy pack in
-    let t = stem_of_uid pack uid in
-    let* () = Vifu.Response.with_json req (Format.stem ~uid:juid) t in
-    Vifu.Response.respond `OK
-  with exn ->
-    let str = Fmt.str "Got an exception: %s" (Printexc.to_string exn) in
-    let* () = Vifu.Response.with_text req str in
-    Vifu.Response.respond `Not_found
-
-let show pack req uid _server () =
-  let open Vifu.Response.Syntax in
+  Cattery.use pool @@ fun (pack, blob) ->
   try
     let size = Carton.size_of_uid pack ~uid Carton.Size.zero in
-    let blob = Carton.Blob.make ~size in
     let value = Carton.of_uid pack blob ~uid in
     match Carton.Value.kind value with
     | `B | `C | `D ->
@@ -166,7 +85,7 @@ let from_documents ~mime contents =
     in
     go Digestif.SHA1.empty 0
   in
-  fun req _server () ->
+  fun req _server _ ->
     let open Vifu.Response.Syntax in
     let* () = Vifu.Response.add ~field:"content-type" mime in
     let hdrs = Vifu.Request.headers req in
@@ -184,16 +103,63 @@ let from_documents ~mime contents =
       let* () = Vifu.Response.with_source req ~compression:`DEFLATE from in
       Vifu.Response.respond `OK
 
-let script = from_documents ~mime:"application/javascript" Documents.script_js
-let style = from_documents ~mime:"text/css" Documents.style_css
-let index = from_documents ~mime:"text/html" Documents.index_html
+let script = from_documents ~mime:"application/javascript" Documents.script
+let style = from_documents ~mime:"text/css" Documents.style
+let index = from_documents ~mime:"text/html" Documents.index
+let fancy = from_documents ~mime:"text/html" Documents.email
+let fancy req _uid server pool = fancy req server pool
+
+type bm25 = { trie : Mkernel.Block.t Cachet.t; avgdl : float }
+
+let of_string str =
+  let rec go acc rem =
+    if rem < 0 then acc
+    else
+      let off = 12 + (rem * 32) in
+      let uid = String.sub str off 20 in
+      let uid = Carton.Uid.unsafe_of_string uid in
+      let frq = String.get_int64_le str (off + 20) in
+      let frq = Int64.float_of_bits frq in
+      let len = String.get_int32_le str (off + 28) in
+      let len = Int32.to_int len in
+      go ((uid, frq, len) :: acc) (rem - 1)
+  in
+  let idf = String.get_int64_le str 0 in
+  let idf = Int64.float_of_bits idf in
+  let len = String.get_int32_le str 8 in
+  let len = Int32.to_int len in
+  let entries = go [] (len - 1) in
+  (idf, entries)
+
+let score { trie; avgdl } query q =
+  let finally () = Flux.Bqueue.close q in
+  Fun.protect ~finally @@ fun () ->
+  let scores = Hashtbl.create 0x7ff in
+  let fn token =
+    match Trie.lookup trie of_string (token :> string) with
+    | Some (idf, entries) when Float.compare idf 0.0 > 0 ->
+        let fn (uid, freq, length) =
+          let _D = Float.of_int length in
+          let _n = freq *. (1.5 +. 1.) in
+          let _m = freq +. (1.5 *. (1. -. 0.75 +. (0.75 *. _D /. avgdl))) in
+          let v = idf *. (_n /. _m) in
+          let p = Hashtbl.find_opt scores uid in
+          let p = Option.value ~default:0.0 p in
+          Hashtbl.replace scores uid (p +. v)
+        in
+        List.iter fn entries
+    | Some _ | None -> ()
+  in
+  List.iter fn query;
+  let fn uid score = if score > 0.0 then Flux.Bqueue.put q (uid, score) in
+  Hashtbl.iter fn scores
 
 let none_if_stop lang =
   match List.assoc_opt lang Stopwords.words with
   | Some stops -> fun stem -> if List.mem stem stops then None else Some stem
   | None -> Option.some
 
-let query req _server () =
+let query bm25 req _server _pool =
   let open Vifu.Response.Syntax in
   match Vifu.Request.of_json req with
   | Ok { Format.lang; query } ->
@@ -204,63 +170,92 @@ let query req _server () =
       let@ () = fun () -> Snowball.remove stemmer in
       let fn = Fun.compose none_if_stop (Snowball.stem stemmer) in
       let tokens = Seq.filter_map fn tokens in
-      let tokens = List.of_seq tokens in
-      let* () = Vifu.Response.with_json req Format.response tokens in
+      let query = List.of_seq tokens in
+      let q = Flux.Bqueue.(create with_close 0x7ff) in
+      let prm = Miou.async @@ fun () -> score bm25 query q in
+      let seq = Flux.Bqueue.to_seq q in
+      let* () =
+        Vifu.Response.with_json ~compression:`DEFLATE req
+          (Format.scores ~uid:juid) seq
+      in
+      let* () = Vifu.Response.respond `OK in
+      Miou.await_exn prm;
+      Vifu.Response.return ()
+  | Error _ ->
+      let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
+      Vifu.Response.respond `Bad_request
+
+let metadata entries req _server _pool =
+  let open Vifu.Response.Syntax in
+  match Vifu.Request.of_json req with
+  | Ok uids ->
+      let fn uid =
+        match Hashtbl.find_opt entries uid with
+        | Some m -> Some (uid, m)
+        | None -> None
+      in
+      let lst = Seq.filter_map fn uids in
+      let* () =
+        Vifu.Response.with_json ~compression:`DEFLATE req
+          (Format.entries ~uid:juid) lst
+      in
       Vifu.Response.respond `OK
   | Error _ ->
       let* () = Vifu.Response.with_text req "Invalid JSON object!\n" in
       Vifu.Response.respond `Bad_request
 
-let run _ cidr gateway port =
-  let devices =
-    let open Mkernel in
-    [ Mnet.stackv4 ~name:"service" ?gateway cidr; Emails.emails "archive" ]
+let rng () = Mirage_crypto_rng_mkernel.initialize (module RNG)
+
+let cachet ~name =
+  let fn blk () =
+    let pagesize = Mkernel.Block.pagesize blk in
+    let map blk ~pos len =
+      let bstr = Bstr.create len in
+      Mkernel.Block.read blk ~src_off:pos bstr;
+      bstr
+    in
+    Cachet.make ~pagesize ~map blk
   in
-  Mkernel.run devices
-  @@ fun (daemon, tcpv4, _udpv4) ((pack, hash), documents, entries) () ->
-  Logs.info (fun m -> m "%d documents(s)" (List.length documents));
-  Logs.info (fun m -> m "%d email(s)" (List.length entries));
-  let rng = Mirage_crypto_rng_mkernel.initialize (module RNG) in
+  Mkernel.(map fn [ block name ])
+
+let devices ?gateway cidr =
+  let open Mkernel in
+  let rng = Mkernel.map rng Mkernel.[]
+  and net = Mnet.stack ~name:"service" ?gateway cidr
+  and archive = Emails.emails "archive"
+  and trie = cachet ~name:"trie" in
+  [ rng; net; archive; trie ]
+
+let run _ cidr gateway port =
+  Mkernel.run (devices ?gateway cidr)
+  @@ fun rng (daemon, tcp, _) (pool, avgdl, entries, _hash) trie () ->
+  let bm25 = { trie; avgdl } in
   let@ () =
    fun () ->
     Mirage_crypto_rng_mkernel.kill rng;
     Mnet.kill daemon
   in
   let cfg = Vifu.Config.v port in
-  let hash_of_entries =
-    let open Digestif.SHA1 in
-    let ctx = empty in
-    let ctx = feed_string ctx hash in
-    let ctx = feed_string ctx ".emails" in
-    to_hex (get ctx)
-  in
-  let hash_of_stems =
-    let open Digestif.SHA1 in
-    let ctx = empty in
-    let ctx = feed_string ctx hash in
-    let ctx = feed_string ctx ".stems" in
-    to_hex (get ctx)
-  in
   let jquery = Format.query ~lang:jlang in
-  let jstem = Jsont.(list juid) in
+  let juids = Format.seq juid in
   let routes =
     let open Vifu.Route in
     let open Vifu.Uri in
     let open Vifu.Type in
     let any = Vifu.Uri.any in
     [
-      get (rel / "list" /?? any) --> list (entries, hash_of_entries);
-      get (rel / "get" /% uid /?? any) --> show pack;
+      get (rel / "get" /% uid /?? any) --> show;
       get (rel / "script.js" /?? any) --> script;
       get (rel / "style.css" /?? any) --> style;
-      get (rel / "stems" /?? any) --> stems (documents, hash_of_stems);
-      post (json_encoding jstem) (rel / "stems" /?? any) --> pstem pack;
-      get (rel / "stem" /% uid /?? any) --> stem pack;
-      post (json_encoding jquery) (rel / "query" /?? any) --> query;
+      get (rel / "get" /% uid /?? any) --> show;
+      get (rel / "email" /% uid /?? any) --> fancy;
+      post (json_encoding jquery) (rel / "query" /?? any) --> query bm25;
+      post (json_encoding juids) (rel / "metadata" /?? any) --> metadata entries;
       get (rel /?? any) --> index;
     ]
   in
-  Vifu.run ~cfg tcpv4 routes ()
+  Logs.info (fun m -> m "HTTP server launched");
+  Vifu.run ~cfg tcp routes pool
 
 open Cmdliner
 

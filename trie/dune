@@ -1,0 +1,6 @@
+(library
+ (name trie)
+ (public_name blame.trie)
+ (wrapped false)
+ (modules trie)
+ (libraries fmt cachet))
