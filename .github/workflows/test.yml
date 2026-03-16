@@ -9,6 +9,8 @@ jobs:
         operating-system: [ubuntu-latest]
     runs-on: ${{ matrix.operating-system }}
     steps:
+      - name: Update system
+        run: sudo apt update
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Use OCaml ${{ matrix.ocaml-version }}
